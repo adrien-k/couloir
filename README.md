@@ -1,11 +1,11 @@
 # couloir: simple http tunneling
 
 ```
-           ______     ______     __  __     __         ______     __     ______
-          /\  ___\   /\  __ \   /\ \/\ \   /\ \       /\  __ \   /\ \   /\  == \
-_________ \ \ \____  \ \ \/\ \  \ \ \_\ \  \ \ \____  \ \ \/\ \  \ \ \  \ \  __<   _________
-           \ \_____\  \ \_____\  \ \_____\  \ \_____\  \ \_____\  \ \_\  \ \_\ \_\
-            \/_____/   \/_____/   \/_____/   \/_____/   \/_____/   \/_/   \/_/ /_/
+ ______     ______     __  __     __         ______     __     ______
+/\  ___\   /\  __ \   /\ \/\ \   /\ \       /\  __ \   /\ \   /\  == \
+\ \ \____  \ \ \/\ \  \ \ \_\ \  \ \ \____  \ \ \/\ \  \ \ \  \ \  __<  
+ \ \_____\  \ \_____\  \ \_____\  \ \_____\  \ \_____\  \ \_\  \ \_\ \_\
+  \/_____/   \/_____/   \/_____/   \/_____/   \/_____/   \/_/   \/_/ /_/
 ```
 
 Temporarily expose a http local service to the Internet using your own server.
@@ -27,7 +27,24 @@ On your **local** machine:
 - Run your local http server, for example on port 3000
 - `npx couloir@latest bind my-domain.com 3000`
 
-To run the **relay** on a different port
+## Recipes
 
-- `npx couloir@latest relay my-domain.com --port 3000`
-- `npx couloir@latest bind my-domain.com 3000 --relay-port 3000`
+### Run the relay on a different port
+
+In order to run the relay service on a port different from 80. For example 3000:
+
+- relay: `npx couloir@latest relay my-domain.com --port 3000`
+- local: `npx couloir@latest bind my-domain.com 3000 --relay-port 3000`
+
+### Override the host header passed to your local server
+
+This is useful if your local server is expecting a Host like 127.0.0.1:3000 for example:
+
+- `npx couloir@latest bind my-domain.com 3000 --override-host 127.0.0.1`
+
+### Run the relay as a daemon
+
+- Intall pm2 and couloir: `npm install -g pm2 couloir`.
+- Start: `pm2 start "couloir relay my-domain.com" --name couloir && pm2 save`.
+- Auto-start on boot: `pm2 startup` and follow instructions.
+- Stop: `pm2 stop couloir && pm2 save`.
