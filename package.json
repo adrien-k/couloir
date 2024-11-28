@@ -1,12 +1,14 @@
 {
   "name": "couloir",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "main": "src/index.js",
   "bin": "./index.js",
   "author": "adrien-k",
   "type": "module",
+  "homepage": "https://github.com/adrien-k/couloir#readme",
+  "repository": "github:adrien-k/couloir",
   "license": "ISC",
-  "description": "",
+  "description": "simple http tunneling",
   "dependencies": {
     "yargs": "^17.7.2"
   }
