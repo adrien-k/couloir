@@ -3,6 +3,10 @@
 import yargs from 'yargs/yargs'
 import { hideBin } from 'yargs/helpers'
 
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const packageJson = require("./package.json");
+
 import relay from './src/relay.js';
 import bind from './src/bind.js';
 
@@ -10,6 +14,10 @@ const DEFAULT_RELAY_PORT = 80
 
 yargs(hideBin(process.argv))
   .scriptName('couloir')
+  .version(false)
+  .command("version", "show the version of couloir", () => {
+    console.log(packageJson.version)
+  })
   .command('relay <domain>', 'start the relay server', (yargs) => {
     return yargs
       .positional('domain', {
