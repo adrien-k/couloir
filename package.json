@@ -1,0 +1,13 @@
+{
+  "name": "couloir",
+  "version": "0.1.4",
+  "main": "src/index.js",
+  "bin": "./index.js",
+  "author": "adrien-k",
+  "type": "module",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "yargs": "^17.7.2"
+  }
+}
