@@ -2,10 +2,11 @@ import net from "node:net";
 import { loggerFactory } from "./logger.js";
 
 export const OPEN_COULOIR = "OPEN_COULOIR";
-export const CLOSE_COULOIR = "CLOSE_COULOIR";
 const JOIN_COULOIR = "JOIN_COULOIR";
 const COULOIR_MATCHER = /^[A-Z]+_COULOIR (.*)$/m;
 const HOST_MATCH = /\r\nHost: (.+)\r\n/;
+const TYPE_HOST = "host";
+const TYPE_CLIENT = "client";
 
 export default function relay(port, domain, { verbose = false } = {}) {
   const log = loggerFactory({ verbose });
@@ -13,7 +14,6 @@ export default function relay(port, domain, { verbose = false } = {}) {
   let couloirCounter = 0;
   const hosts = {};
   const clients = {};
-
   function bindNextSockets(host) {
     while (clients[host].length && hosts[host].length) {
       const clientSocket = clients[host].shift();
@@ -36,20 +36,25 @@ export default function relay(port, domain, { verbose = false } = {}) {
       socket: socket,
       host: null,
       request: "",
+      type: TYPE_CLIENT, // Client until proved to be a host socket
     };
 
     socket.on("end", () => {
       log(`Socket disconnected ${relaySocket.host}#${relaySocket.id}`);
-      if (relaySocket.host && hosts[relaySocket.host]) {
+      const host = relaySocket.host;
+      if (host && relaySocket.type === "host" && hosts[host]) {
         // Ensure we don't leave a dead socket in the available hosts
-        hosts[relaySocket.host] = hosts[relaySocket.host].filter(({ id }) => id !== relaySocket.id);
-        bindNextSockets(relaySocket.host);
+        hosts[host] = hosts[host].filter(({ id }) => id !== relaySocket.id);
+        if (hosts[host].length === 0) {
+          log(`Closing couloir host ${host}`);
+          delete hosts[host];
+          delete clients[host];
+        }
       }
     });
 
     const onSocketData = (data) => {
       const dataString = data.toString();
-
       if (dataString.startsWith(OPEN_COULOIR)) {
         couloirCounter++;
         const host = `couloir-${couloirCounter}.${domain}`;
@@ -62,18 +67,10 @@ export default function relay(port, domain, { verbose = false } = {}) {
         return;
       }
 
-      if (dataString.startsWith(CLOSE_COULOIR)) {
-        const couloirHost = dataString.match(COULOIR_MATCHER)[1];
-        log(`Couloir host ${couloirHost} closed by #${relaySocket.id}`, "info");
-        delete hosts[couloirHost];
-        delete clients[couloirHost];
-        socket.write(`OK\r\n`);
-        return;
-      }
-
       if (dataString.startsWith(JOIN_COULOIR)) {
         const host = dataString.match(COULOIR_MATCHER)[1];
         relaySocket.host = host;
+        relaySocket.type = TYPE_HOST;
         hosts[host].push(relaySocket);
         log(`Host socket ${host}#${relaySocket.id} connected (${hosts[host].length})`);
 
@@ -97,14 +94,6 @@ export default function relay(port, domain, { verbose = false } = {}) {
           relaySocket.host = host;
           clients[host].push(relaySocket);
           log(`Client socket ${host}#${relaySocket.id} connected (${clients[host].length})`);
-
-          // Remove http 1.1 keep-alive behaviour to ensure the socket is quickly re-created for other client sockets
-          // and to avoid parsing headers of the follow-up request that may go through the same socket.
-          relaySocket.request = relaySocket.request.replace(/\r\nconnection:.*\r\n/i, "\r\n");
-          relaySocket.request = relaySocket.request.replace(
-            "\r\n\r\n",
-            "\r\nConnection: close\r\n\r\n"
-          );
 
           bindNextSockets(host);
 
