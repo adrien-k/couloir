@@ -57,12 +57,17 @@ yargs(hideBin(process.argv))
           describe: "local host to proxy to",
           type: "integer",
           default: "127.0.0.1",
-        });
+        })
+        .options("override-host", {
+          describe: "override the host header in the request",
+        })
+
     },
     (argv) => {
       bind(argv.relayHost, argv.localPort, {
         localHost: argv.localHost,
         relayPort: argv.relayPort,
+        overrideHost: argv.overrideHost,
         verbose: argv.verbose,
       });
     }
