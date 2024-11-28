@@ -1,8 +1,10 @@
 # couloir: simple http tunneling
 
-Experimental project to play with sockets and temporarily expose a local service to the Internet. 
+Temporarily expose a http local service to the Internet using your own server.
 
-*Do not use for anything too serious*
+Mostly an experimental project to play with barebone TCP sockets and HTTP.
+
+*Do not use for anything serious, there are plenty of reliable projects to do this!*
 
 ## Usage
 
