@@ -1,10 +1,19 @@
 import net from "node:net";
 import { OPEN_COULOIR, CLOSE_COULOIR } from "./relay.js";
 
-const PROXY_CONCURRENT = 1;
+// This defines the number of concurrent socket connections opened with the relay
+// which in turn allows the relay to serve as many requests simultaneously.
+//
+// Beyond that limit, requests will just wait for a fee socket. This is also why
+// we disable the keep alive behaviour to ensure sockets are rotating between requests.
+const PROXY_CONCURRENT = 10;
 
-export default async function bind(relayHost, port, { relayPort = 80 } = {}) {
-  let couloirHost
+export default async function bind(
+  relayHost,
+  localPort,
+  { localHost = "127.0.0.1", relayPort = 80 } = {}
+) {
+  let couloirHost;
   let socketCount = 0;
   let localSocketError = false;
 
@@ -15,10 +24,10 @@ export default async function bind(relayHost, port, { relayPort = 80 } = {}) {
 
     try {
       while (socketCount < PROXY_CONCURRENT) {
-        console.log(`opening relay socket (current: ${socketCount})`);
         // Increment before connection to avoid going over the limit while connection happens
         // as this function may be called concurrently
         socketCount++;
+        console.log(`Opening relay socket (${socketCount})`);
         await connect(couloirHost);
       }
     } catch (err) {
@@ -36,7 +45,7 @@ export default async function bind(relayHost, port, { relayPort = 80 } = {}) {
 
   async function connect(couloirHost) {
     return new Promise((resolve, reject) => {
-      const localSocket = net.createConnection({ host: "127.0.0.1", port }, () => {
+      const localSocket = net.createConnection({ host: localHost, port: localPort }, () => {
         const proxyHostSocket = net.createConnection({ host: relayHost, port: relayPort }, () => {
           proxyHostSocket.write(`JOIN_COULOIR ${couloirHost}\n`);
           localSocket.pipe(proxyHostSocket);
@@ -45,7 +54,7 @@ export default async function bind(relayHost, port, { relayPort = 80 } = {}) {
         });
 
         localSocket.on("end", () => {
-          console.log("localSocket end");
+          console.log(`Relay socket closed (current: ${socketCount})`);
           socketCount--;
           openSockets(couloirHost);
         });
@@ -77,8 +86,8 @@ export default async function bind(relayHost, port, { relayPort = 80 } = {}) {
     couloirHost = await sendMessage(OPEN_COULOIR);
     console.log(`Couloir opened on ${new URL(`http://${couloirHost}:${relayPort}`)}`);
     openSockets(couloirHost);
-  } catch (e) {
-    console.error(`Error connecting to relay server: ${err.message}`);
+  } catch (err) {
+    console.error(`Error binding to relay server: ${err.message}`);
     process.exit(1);
   }
 
@@ -87,7 +96,7 @@ export default async function bind(relayHost, port, { relayPort = 80 } = {}) {
 
   async function cleanup() {
     console.log("Cleaning up before exit...");
-    await sendMessage(`${CLOSE_COULOIR} ${couloirHost}`)
+    await sendMessage(`${CLOSE_COULOIR} ${couloirHost}`);
     process.exit();
   }
 }

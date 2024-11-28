@@ -23,11 +23,10 @@ yargs(hideBin(process.argv))
   }, (argv) => {
     relay(argv.port, argv.domain)
   })
-  .command('bind <host> <local-port>', 'expose the given local port on the given remote host IP', (yargs) => {
+  .command('bind <relay-host> <local-port>', 'expose the given local port on the given remote host IP', (yargs) => {
     return yargs
-      .positional('host', {
+      .positional('relay-host', {
         describe: 'ip or hostname of the couloir host server',
-        
       })
       .positional('local-port', {
         describe: 'local port to proxy to',
@@ -38,9 +37,13 @@ yargs(hideBin(process.argv))
         type: 'integer',
         default: DEFAULT_RELAY_PORT
       })
-
+      .option('local-host', {
+        describe: 'local host to proxy to',
+        type: 'integer',
+        default: '127.0.0.1'
+      })
   }, (argv) => {
-    bind(argv.host, argv.localPort, { relayPort: argv.relayPort })
+    bind(argv.relayHost, argv.localPort, { localHost: argv.localHost, relayPort: argv.relayPort })
   })
   .demandCommand(1)
   .strict()
