@@ -42,11 +42,6 @@ yargs(hideBin(process.argv))
   }, (argv) => {
     bind(argv.host, argv.localPort, { relayPort: argv.relayPort })
   })
-  .option('verbose', {
-    alias: 'v',
-    type: 'boolean',
-    description: 'Run with verbose logging'
-  })
   .demandCommand(1)
   .strict()
   .parse()
