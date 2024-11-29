@@ -18,63 +18,66 @@ yargs(hideBin(process.argv))
   })
   .command(
     "relay <domain>",
-    "start the relay server",
+    "Start the relay server.",
     (yargs) => {
       return yargs
         .positional("domain", {
-          describe: "domain on which to create couloir hosts",
+          describe: "Domain under which to couloir hosts will be created.",
         })
         .option("port", {
-          describe: "port on which the relay will be exposed. Default 443, or 80 in HTTP mode",
-          type: "integer"
+          describe: "Port on which the relay will be exposed. Default 443, or 80 in HTTP mode.",
+          type: "integer",
         })
         .option("http", {
-          describe: "when enabled, the relay will serve http traffic",
+          describe: "When enabled, the relay will serve http traffic instead of https.",
           type: "boolean",
-          default: false
+          default: false,
         })
         .option("email", {
-          describe: "Email for TLS cert generation",
-          default: "test@example.com"
+          describe: "Email used for Let's Encrypt cert generation",
+          default: "test@example.com",
         });
     },
     (argv) => {
       const port = argv.port || (argv.http ? 80 : 443);
       if (!argv.http && port === 80) {
-        console.error("Error: cannot use port 80 when TLS is enabled as it is required for domain validation.");
+        console.error(
+          "Error: cannot use port 80 when TLS is enabled as it is required for domain validation."
+        );
       }
       relay(port, argv.domain, { enableTLS: !argv.http, verbose: argv.verbose, email: argv.email });
     }
   )
   .command(
     "bind <relay-host> <local-port>",
-    "expose the given local port on the given remote host IP",
+    "Expose the given local port on the given remote hostname",
     (yargs) => {
       return yargs
         .positional("relay-host", {
-          describe: "ip or hostname of the couloir host server",
+          describe:
+            "Hostname from which the proxy will be served. Must be a subdomain of the domain passed to the relay command.",
         })
         .positional("local-port", {
-          describe: "local port to proxy to",
+          describe: "Local port to proxy to.",
           type: "integer",
         })
         .option("relay-port", {
-          describe: "port on which the relay is running",
+          describe: "Port on which the relay is running if not the default port",
           type: "integer",
         })
         .option("local-host", {
-          describe: "local host to proxy to",
+          describe: "Local host to proxy to if not 127.0.0.1.",
           type: "integer",
           default: "127.0.0.1",
         })
         .options("override-host", {
-          describe: "override the host header in the request",
+          describe: "Override the host header in the request.",
         })
         .option("http", {
-          describe: "must be enabled when relay in HTTP mode",
+          describe: "Must be enabled to connect to a relay running in HTTP mode.",
           type: "boolean",
-          default: false
-        })
+          default: false,
+        });
     },
     (argv) => {
       let relayPort = argv.relayPort || (argv.http ? 80 : 443);

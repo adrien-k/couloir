@@ -1,14 +1,16 @@
 import net from "node:net";
 import tls from "node:tls";
+import crypto from "node:crypto";
+
 import { loggerFactory } from "./logger.js";
 import { createCertServer } from "./tls.js";
 
 export const OPEN_COULOIR = "OPEN_COULOIR";
-const OPEN_COULOIR_ACK = `${OPEN_COULOIR}_ACK`;
-const JOIN_COULOIR = "JOIN_COULOIR";
-const COULOIR_MATCHER = /^[A-Z]+_COULOIR (.*)$/m;
+export const JOIN_COULOIR = "JOIN_COULOIR";
+const COULOIR_MATCHER = /^([A-Z]+_COULOIR) (.*)$/m;
 const HOST_MATCH = /\r\nHost: (.+)\r\n/;
 const TYPE_HOST = "host";
+const TYPE_HOST_INIT = "init";
 const TYPE_CLIENT = "client";
 
 export default function relay(port, domain, { enableTLS, verbose, email } = {}) {
@@ -17,6 +19,72 @@ export default function relay(port, domain, { enableTLS, verbose, email } = {}) 
   let couloirCounter = 0;
   const hosts = {};
   const clients = {};
+  const keyToHost = {};
+
+  function sendCouloirResponse(socket, key, response, { keepSocket = false } = {}) {
+    if (typeof response === "object") {
+      response = JSON.stringify(response);
+    }
+    const ack_key = `${key}_ACK`;
+
+    log(`Sending Couloir message ${ack_key} ${response}`);
+    socket.write(`${ack_key} ${response}`);
+    if (!keepSocket) {
+      socket.end();
+    }
+  }
+
+  function onCouloirMessage(relaySocket, [messageKey, message]) {
+    log(`Receiving Couloir message ${messageKey} ${message}`);
+    const { socket } = relaySocket;
+    const response = {};
+
+    if (messageKey === OPEN_COULOIR) {
+      relaySocket.type = TYPE_HOST_INIT;
+      let host = message;
+
+      if (host === domain) {
+        host = `couloir${couloirCounter > 1 ? couloirCounter : ""}.${domain}`;
+      }
+
+      if (hosts[host]) {
+        response.error = `Couloir host ${host} is already opened`;
+      }
+
+      if (!response.error) {
+        couloirCounter++;
+        response.host = host;
+        const key = (response.key = crypto.randomBytes(24).toString("hex"));
+        log(`New couloir host ${host} opened by #${relaySocket.id}`, "info");
+
+        relaySocket.host = host;
+        keyToHost[key] = host;
+        hosts[host] = [];
+        clients[host] = [];
+      }
+
+      sendCouloirResponse(socket, messageKey, response);
+      return;
+    }
+
+    if (messageKey === JOIN_COULOIR) {
+      relaySocket.type = TYPE_HOST;
+      const key = message;
+      const host = keyToHost[key];
+
+      if (host) {
+        relaySocket.host = host;
+        hosts[host].push(relaySocket);
+        log(`Host socket ${host}#${relaySocket.id} connected (${hosts[host].length})`);
+        sendCouloirResponse(socket, messageKey, response, { keepSocket: true });
+        bindNextSockets(host);
+      } else {
+        response.error = "Invalid couloir key. Please restart your couloir client.";
+        sendCouloirResponse(socket, messageKey, response);
+      }
+    }
+  }
+
   function bindNextSockets(host) {
     while (clients[host].length && hosts[host].length) {
       const clientSocket = clients[host].shift();
@@ -43,6 +111,10 @@ export default function relay(port, domain, { enableTLS, verbose, email } = {}) 
         {
           SNICallback: async (servername, cb) => {
             try {
+              if (!(servername === domain || servername.endsWith(`.${domain}`))) {
+                return cb(`Invalid domain`);
+              }
+
               log(`Handling SNI request for ${servername}`);
               const [key, cert] = await certServer.getCertOnDemand(servername);
 
@@ -60,6 +132,7 @@ export default function relay(port, domain, { enableTLS, verbose, email } = {}) 
       return net.createServer(onSocket);
     }
   };
+
   const server = createRelayServer((socket) => {
     socketCounter++;
 
@@ -76,7 +149,7 @@ export default function relay(port, domain, { enableTLS, verbose, email } = {}) 
     socket.on("end", () => {
       log(`Socket disconnected ${relaySocket.host}#${relaySocket.id}`);
       const host = relaySocket.host;
-      if (host && relaySocket.type === "host" && hosts[host]) {
+      if (host && relaySocket.type === TYPE_HOST && hosts[host]) {
         // Ensure we don't leave a dead socket in the available hosts
         hosts[host] = hosts[host].filter(({ id }) => id !== relaySocket.id);
         if (hosts[host].length === 0) {
@@ -89,28 +162,11 @@ export default function relay(port, domain, { enableTLS, verbose, email } = {}) 
 
     const onSocketData = (data) => {
       const dataString = data.toString();
-      if (dataString.startsWith(OPEN_COULOIR)) {
-        couloirCounter++;
-        const host = `couloir${couloirCounter > 1 ? couloirCounter : ""}.${domain}`;
-        log(`New couloir host ${host} opened by #${relaySocket.id}`, "info");
 
-        relaySocket.host = host;
-        hosts[host] = [];
-        clients[host] = [];
-        socket.write(`${OPEN_COULOIR_ACK} ${host}`);
-        return;
-      }
-
-      if (dataString.startsWith(JOIN_COULOIR)) {
-        const host = dataString.match(COULOIR_MATCHER)[1];
-        relaySocket.host = host;
-        relaySocket.type = TYPE_HOST;
-        hosts[host].push(relaySocket);
-        log(`Host socket ${host}#${relaySocket.id} connected (${hosts[host].length})`);
-
-        bindNextSockets(host);
-
+      const matchCouloirMessage = dataString.match(COULOIR_MATCHER);
+      if (matchCouloirMessage) {
         socket.off("data", onSocketData);
+        onCouloirMessage(relaySocket, matchCouloirMessage.slice(1));
         return;
       }
 
