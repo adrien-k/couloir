@@ -10,8 +10,6 @@ const packageJson = esRequire("./package.json");
 import relay from "./src/relay.js";
 import bind from "./src/bind.js";
 
-const DEFAULT_RELAY_PORT = 80;
-
 yargs(hideBin(process.argv))
   .scriptName("couloir")
   .version(false)
@@ -27,13 +25,25 @@ yargs(hideBin(process.argv))
           describe: "domain on which to create couloir hosts",
         })
         .option("port", {
-          describe: "port on which the relay will be exposed",
-          type: "integer",
-          default: DEFAULT_RELAY_PORT,
+          describe: "port on which the relay will be exposed. Default 443, or 80 in HTTP mode",
+          type: "integer"
+        })
+        .option("http", {
+          describe: "when enabled, the relay will serve http traffic",
+          type: "boolean",
+          default: false
+        })
+        .option("email", {
+          describe: "Email for TLS cert generation",
+          default: "test@example.com"
         });
     },
     (argv) => {
-      relay(argv.port, argv.domain, { verbose: argv.verbose });
+      const port = argv.port || (argv.http ? 80 : 443);
+      if (!argv.http && port === 80) {
+        console.error("Error: cannot use port 80 when TLS is enabled as it is required for domain validation.");
+      }
+      relay(port, argv.domain, { enableTLS: !argv.http, verbose: argv.verbose, email: argv.email });
     }
   )
   .command(
@@ -51,7 +61,6 @@ yargs(hideBin(process.argv))
         .option("relay-port", {
           describe: "port on which the relay is running",
           type: "integer",
-          default: DEFAULT_RELAY_PORT,
         })
         .option("local-host", {
           describe: "local host to proxy to",
@@ -61,12 +70,18 @@ yargs(hideBin(process.argv))
         .options("override-host", {
           describe: "override the host header in the request",
         })
-
+        .option("http", {
+          describe: "must be enabled when relay in HTTP mode",
+          type: "boolean",
+          default: false
+        })
     },
     (argv) => {
+      let relayPort = argv.relayPort || (argv.http ? 80 : 443);
       bind(argv.relayHost, argv.localPort, {
         localHost: argv.localHost,
-        relayPort: argv.relayPort,
+        relayPort,
+        enableTLS: !argv.http,
         overrideHost: argv.overrideHost,
         verbose: argv.verbose,
       });
