@@ -166,7 +166,7 @@ export function createCertServer({
   return {
     listen: () =>
       httpServer.listen(HTTP_SERVER_PORT, () => {
-        log(`Cert validation server listening on port ${HTTP_SERVER_PORT}`);
+        log(`Cert validation server listening on port ${HTTP_SERVER_PORT}`, "info");
       }),
     getCertOnDemand,
   };
