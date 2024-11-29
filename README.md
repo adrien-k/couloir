@@ -12,7 +12,7 @@ Temporarily expose a http local service to the Internet using your own server.
 
 Mostly an experimental project to play with TCP sockets, TLS and HTTP.
 
-_Do not use for anything serious, there are plenty of more reliable projects to do this!_
+_Do not use for anything too serious, there are plenty of more reliable projects to do this!_
 
 ## Installation
 On both the relay server and your local machine. Make sure both versions match.
@@ -25,8 +25,8 @@ npm install -g couloir
 
 ### On your **relay** machine (ex: a cheap VPS)
 
-1. Ensure port 80 - for cert validation - and 443  - for traffic - are open and accessible from Internet.
-2. Define a domain and ensure the domain and its wildcard points to your relay. For example:
+1. Ensure **port 80**, for cert validation, and **port 443**, for relay traffic, are open and accessible from Internet.
+2. Configure your (sub)domain to point to your relay machine IP. For example:
 
 ```
 # VPS IP being 1.2.3.4:
@@ -73,9 +73,15 @@ This is useful if your local server is expecting a Host like 127.0.0.1:3000. For
 
 - Locally, run `couloir bind my-service.sub.domain.com 3000 --override-host 127.0.0.1`.
 
-### Run the relay as a daemon
+### Run the relay as a daemon with pm2
 
-- Intall pm2: `npm install -g pm2`.
-- Start: `pm2 start "couloir relay sub.domain.com" --name couloir && pm2 save`.
-- Auto-start on boot: `pm2 startup` and follow instructions.
-- Stop: `pm2 stop couloir && pm2 save`.
+Install pm2 with `npm install -g pm2`.
+
+Then:
+
+```
+pm2 start "couloir relay sub.domain.com" --name couloir
+pm2 save
+# to have the daemon run on boot. Follow instructions.
+pm2 startup
+```
