@@ -1,14 +1,17 @@
 import net from "node:net";
+import tls from "node:tls";
 import { loggerFactory } from "./logger.js";
+import { createCertServer } from "./tls.js";
 
 export const OPEN_COULOIR = "OPEN_COULOIR";
+const OPEN_COULOIR_ACK = `${OPEN_COULOIR}_ACK`;
 const JOIN_COULOIR = "JOIN_COULOIR";
 const COULOIR_MATCHER = /^[A-Z]+_COULOIR (.*)$/m;
 const HOST_MATCH = /\r\nHost: (.+)\r\n/;
 const TYPE_HOST = "host";
 const TYPE_CLIENT = "client";
 
-export default function relay(port, domain, { verbose = false } = {}) {
+export default function relay(port, domain, { enableTLS, verbose, email } = {}) {
   const log = loggerFactory({ verbose });
 
   let couloirCounter = 0;
@@ -24,9 +27,40 @@ export default function relay(port, domain, { verbose = false } = {}) {
       hostSocket.socket.pipe(clientSocket.socket);
     }
   }
-
+  let certServer;
+  if (enableTLS) {
+    certServer = createCertServer({ log, email });
+    certServer.listen();
+    // Already prepare a few certs cert for the main domain and first couloir
+    certServer.getCertOnDemand(domain);
+    certServer.getCertOnDemand(`couloir.${domain}`);
+  }
   let socketCounter = 0;
-  const server = net.createServer((socket) => {
+
+  const createRelayServer = (onSocket) => {
+    if (enableTLS) {
+      return tls.createServer(
+        {
+          SNICallback: async (servername, cb) => {
+            try {
+              log(`Handling SNI request for ${servername}`);
+              const [key, cert] = await certServer.getCertOnDemand(servername);
+
+              log(`Found certificate for ${servername}, serving secure context`);
+              cb(null, tls.createSecureContext({ key, cert }));
+            } catch (e) {
+              log(`[Cert] ${e.stack}`, "error");
+              cb(e.message);
+            }
+          },
+        },
+        onSocket
+      );
+    } else {
+      return net.createServer(onSocket);
+    }
+  };
+  const server = createRelayServer((socket) => {
     socketCounter++;
 
     // A Relay socket can be either a regular client HTTP request or a host proxy socket.
@@ -57,13 +91,13 @@ export default function relay(port, domain, { verbose = false } = {}) {
       const dataString = data.toString();
       if (dataString.startsWith(OPEN_COULOIR)) {
         couloirCounter++;
-        const host = `couloir-${couloirCounter}.${domain}`;
+        const host = `couloir${couloirCounter > 1 ? couloirCounter : ""}.${domain}`;
         log(`New couloir host ${host} opened by #${relaySocket.id}`, "info");
 
         relaySocket.host = host;
         hosts[host] = [];
         clients[host] = [];
-        socket.write(`${host}\r\n`);
+        socket.write(`${OPEN_COULOIR_ACK} ${host}`);
         return;
       }
 
@@ -108,6 +142,9 @@ export default function relay(port, domain, { verbose = false } = {}) {
     };
 
     socket.on("data", onSocketData);
+    socket.on("error", (err) => {
+      log(err, "error");
+    });
   });
 
   server.on("error", (err) => {
@@ -115,6 +152,6 @@ export default function relay(port, domain, { verbose = false } = {}) {
   });
 
   server.listen(port, () => {
-    log("Couloir host server listening on port", port, "info");
+    log("Couloir host server listening on port " + port, "info");
   });
 }

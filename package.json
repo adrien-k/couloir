@@ -1,6 +1,6 @@
 {
   "name": "couloir",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "main": "src/index.js",
   "bin": "./index.js",
   "author": "adrien-k",
@@ -10,6 +10,7 @@
   "license": "ISC",
   "description": "simple http tunneling",
   "dependencies": {
+    "acme-client": "^5.4.0",
     "yargs": "^17.7.2"
   }
 }
