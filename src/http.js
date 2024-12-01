@@ -37,15 +37,15 @@ export function parseResHead(head) {
 export function pipeHttpRequest(
   source,
   target,
-  { initialBuffer, onHead = (h) => h, onEnd = () => target.end() } = {}
+  { initialBuffer, onHead = (h) => h, onEnd = () => target.end() } = {},
 ) {
   let headBuffer = initialBuffer || Buffer.from([]);
   let headDone = false;
-  
+
   source.on("data", (data) => {
     if (!headDone) {
       headBuffer = Buffer.concat([headBuffer, data]);
-      
+
       const bodySeparator = headBuffer.indexOf("\r\n\r\n");
       if (bodySeparator > -1) {
         // +2 to include the last header CRLF.

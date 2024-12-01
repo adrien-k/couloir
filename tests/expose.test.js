@@ -4,9 +4,8 @@ import net from "node:net";
 import tls from "node:tls";
 import expose from "../src/expose.js";
 import relay from "../src/relay.js";
-import { join } from "node:path";
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -21,24 +20,25 @@ function letTheBitsFlow() {
 }
 
 function assertHttpEqual(req, head, body) {
-  const endOfHead = req.indexOf( "\r\n\r\n");
+  const endOfHead = req.indexOf("\r\n\r\n");
   assert.equal(req.toString("utf8", 0, endOfHead + 2), head);
   assert.equal(req.toString("hex", endOfHead + 4), body.toString("hex"));
 }
 
 let relayConfig, bindConfig, logs;
 const logFactory = (source) => (msg, level) => {
-  if ( level === "error") {
+  if (level === "error") {
     console.error(`[${source}] ${msg}`);
   } else {
-    logs.push(`[${source}] ${msg}`)
+    logs.push(`[${source}] ${msg}`);
   }
-}
+};
 
 beforeEach(() => {
   logs = [];
 
   relayConfig = {
+    port: RELAY_PORT,
     domain: "test.local",
     http: true,
     log: logFactory("relay"),
@@ -62,45 +62,32 @@ async function setup(
       });
     },
   },
-  testFn
+  testFn,
 ) {
   const relayServer = relay(relayConfig);
-  const relaySockets = [];
-  relayServer.on("connection", (socket) => relaySockets.push(socket));
   const localServer = net.createServer(onLocalConnection);
-  const localSockets = [];
-  localServer.on("connection", (socket) => localSockets.push(socket));
   const bindServer = expose(bindConfig);
 
-  async function close() {
-    bindServer.close();
-    relayServer.close();
+  await relayServer.start();
+  await new Promise((resolve, reject) => {
+    localServer.on("error", reject);
+    localServer.listen(LOCAL_PORT, resolve);
+  });
+  await bindServer.start();
+
+  try {
+    await testFn();
+  } catch (e) {
+    // Showing verbose outuput for debugging failures
+    console.error(logs);
+    throw e;
+  } finally {
+    bindServer.stop();
+    relayServer.stop();
     localServer.close();
-    relaySockets.forEach((s) => s.end());
-    localSockets.forEach((s) => s.end());
-    // Smelly but easier to just let a few ms pass for
-    // everything to close.
+    // Easier to just let a bit of time pass for everything to close.
     await letTheBitsFlow();
   }
-
-  return new Promise((resolve, reject) => {
-    relayServer.listen(RELAY_PORT, () => {
-      localServer.listen(LOCAL_PORT, () => {
-        bindServer.listen(async () => {
-          try {
-            await testFn();
-            resolve();
-            await close();
-          } catch (e) {
-            // Showing verbose outuput for debugging failures
-            console.error(logs);
-            await close();
-            reject(e);
-          }
-        });
-      });
-    });
-  });
 }
 
 it("tunnels http request/response from relay to local server and back", async () => {
@@ -120,7 +107,7 @@ it("tunnels http request/response from relay to local server and back", async ()
     });
   };
 
-  await setup({onLocalConnection}, async () => {
+  await setup({ onLocalConnection }, async () => {
     const relaySocket = net.createConnection({ port: RELAY_PORT }, () => {
       relaySocket.on("data", (data) => {
         relayServerReceived.push(data);
@@ -134,9 +121,13 @@ it("tunnels http request/response from relay to local server and back", async ()
     assertHttpEqual(
       localServerReceived[0], // Proxy removes keep-alive and adds the Connection: close
       "GET / HTTP/1.1\r\nHost: couloir.test.local\r\nConnection: close\r\n",
-      BINARY_BODY
+      BINARY_BODY,
     );
-    assertHttpEqual(relayServerReceived[0], "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n", BINARY_BODY);
+    assertHttpEqual(
+      relayServerReceived[0],
+      "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n",
+      BINARY_BODY,
+    );
   });
 });
 
@@ -152,7 +143,7 @@ it("can handle multiple sockets in series when reaching max concurrency", async 
     localSockets.push(socket);
   };
 
-  await setup({onLocalConnection}, async () => {
+  await setup({ onLocalConnection }, async () => {
     // Simulate 2 concurrent requests
     [0, 1].forEach((index) => {
       const socket = net.createConnection({ port: RELAY_PORT }, () => {
@@ -180,7 +171,14 @@ it("can handle multiple sockets in series when reaching max concurrency", async 
 
     await letTheBitsFlow();
 
-    assert(relayServerReceived[0].length && relayServerReceived[1].length);
+    assert.equal(
+      relayServerReceived[0].toString(),
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar",
+    );
+    assert.equal(
+      relayServerReceived[1].toString(),
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar",
+    );
   });
 });
 
@@ -197,7 +195,7 @@ it("can handle multiple sockets in parallel", async () => {
     localSockets.push(socket);
   };
 
-  await setup({onLocalConnection}, async () => {
+  await setup({ onLocalConnection }, async () => {
     // Simulate 2 concurrent requests
     [0, 1].forEach((index) => {
       const socket = net.createConnection({ port: RELAY_PORT }, () => {
@@ -217,15 +215,21 @@ it("can handle multiple sockets in parallel", async () => {
     });
 
     await letTheBitsFlow();
-    assert(relayServerReceived[0].length && relayServerReceived[1].length);
+    assert.equal(
+      relayServerReceived[0].toString(),
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar",
+    );
+    assert.equal(
+      relayServerReceived[1].toString(),
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar",
+    );
   });
 });
 
 it("can take a custom sub-domain", async () => {
-  bindConfig.relayHost = "my-domain.test.local";
+  bindConfig.name = "my-domain";
 
-  const httpRequest =
-    "GET / HTTP/1.1\r\nHost: my-domain.test.local\r\n\r\nfoo";
+  const httpRequest = "GET / HTTP/1.1\r\nHost: my-domain.test.local\r\n\r\nfoo";
   const relayServerReceived = [];
 
   await setup({}, async () => {
@@ -238,11 +242,14 @@ it("can take a custom sub-domain", async () => {
     await letTheBitsFlow();
 
     assert.equal(relayServerReceived.length, 1);
+    assert.equal(
+      relayServerReceived[0].toString(),
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar",
+    );
   });
 });
 
-
-describe("with TLS", () => { 
+describe("with TLS", () => {
   beforeEach(() => {
     relayConfig.http = false;
     bindConfig.http = false;
@@ -250,23 +257,32 @@ describe("with TLS", () => {
 
   it("works as well", async () => {
     relayConfig.certsDirectory = join(__dirname, "./certs");
-  
-    const httpRequest =
-      "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo";
+
+    const httpRequest = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo";
     const relayServerReceived = [];
-  
+
     await setup({}, async () => {
-      const socket = tls.connect({host: '127.0.0.1', port: RELAY_PORT, servername: "couloir.test.local" }, () => {
-        socket.on("data", (data) => {
-          relayServerReceived.push(data);
-        });
-        socket.write(httpRequest);
-      });
+      const socket = tls.connect(
+        {
+          host: "127.0.0.1",
+          port: RELAY_PORT,
+          servername: "couloir.test.local",
+        },
+        () => {
+          socket.on("data", (data) => {
+            relayServerReceived.push(data);
+          });
+          socket.write(httpRequest);
+        },
+      );
 
       await letTheBitsFlow();
-      
+
       assert.equal(relayServerReceived.length, 1);
-      assert.equal(relayServerReceived[0].toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
+      assert.equal(
+        relayServerReceived[0].toString(),
+        "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar",
+      );
     });
   });
-})
+});

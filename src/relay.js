@@ -4,18 +4,14 @@ import crypto from "node:crypto";
 
 import { createCertServer } from "./certs.js";
 import { defaultLogger } from "./logger.js";
-import {
-  onHostToRelayMessage,
-  OPEN_COULOIR,
-  JOIN_COULOIR,
-} from "./protocol.js";
+import { onHostToRelayMessage, OPEN_COULOIR, JOIN_COULOIR } from "./protocol.js";
 
 const HOST_MATCH = /\r\nHost: (.+)\r\n/;
 const TYPE_HOST = "host";
-const TYPE_HOST_OPEN = "host_open";
 const TYPE_CLIENT = "client";
 
 export default function relay({
+  port,
   domain,
   http = false,
   email = "test@example.com",
@@ -28,20 +24,22 @@ export default function relay({
   const clients = {};
   const keyToHost = {};
 
-  let certServer;
-
-  if (!http) {
-    certServer = createCertServer({ certsDirectory, log, email, domain });
-    certServer.listen();
-  }
-
   let socketCounter = 0;
 
-  const createRelayServer = (onSocket) => {
+  const createRelayServers = (onSocket) => {
     if (!http) {
-      return tls.createServer({ SNICallback: certServer.SNICallback }, onSocket);
+      const certService = createCertServer({
+        certsDirectory,
+        log,
+        email,
+        domain,
+      });
+      return {
+        relay: tls.createServer({ SNICallback: certService.SNICallback }, onSocket),
+        certService,
+      };
     } else {
-      return net.createServer(onSocket);
+      return { relay: net.createServer(onSocket) };
     }
   };
 
@@ -77,7 +75,7 @@ export default function relay({
     }
   }
 
-  const server = createRelayServer((socket) => {
+  const { relay, certService } = createRelayServers((socket) => {
     const id = socketCounter++;
 
     // A Relay socket can be either a regular client HTTP requestChunks or a host proxy socket.
@@ -97,25 +95,33 @@ export default function relay({
     };
 
     function onCouloirOpen(host, sendResponse) {
-      relaySocket.type = TYPE_HOST_OPEN;
+      relaySocket.type = TYPE_HOST;
 
       if (!host.endsWith(`.${domain}`)) {
         host = `couloir${couloirCounter > 1 ? couloirCounter : ""}.${domain}`;
       }
-      
+
       if (hosts[host]) {
-        return sendResponse({error: `Couloir host ${host} is already opened`})
+        return sendResponse({
+          error: `Couloir host ${host} is already opened`,
+        });
       }
-      
+
       couloirCounter++;
-      const key =  crypto.randomBytes(24).toString("hex")
+      const key = crypto.randomBytes(24).toString("hex");
       log(`New couloir host ${host} opened by #${relaySocket.id}`, "info");
+
+      if (certService) {
+        // Already start the let's encrypt cert generation.
+        // We don't await it on purpose
+        certService.getCertOnDemand(host);
+      }
 
       relaySocket.host = host;
       keyToHost[key] = host;
       hosts[host] = [];
       clients[host] = [];
-      
+
       sendResponse({ key, host });
     }
 
@@ -130,7 +136,9 @@ export default function relay({
         sendResponse({});
         bindNextSockets(host);
       } else {
-        sendResponse({ error: "Invalid couloir key. Please restart your couloir client." })
+        sendResponse({
+          error: "Invalid couloir key. Please restart your couloir client.",
+        });
       }
     }
 
@@ -138,7 +146,7 @@ export default function relay({
       [OPEN_COULOIR]: onCouloirOpen,
       [JOIN_COULOIR]: onCouloirJoin,
     });
-    
+
     const onSocketClientData = (data) => {
       if (relaySocket.type === TYPE_HOST) {
         return socket.off("data", onSocketClientData);
@@ -190,9 +198,31 @@ export default function relay({
     });
   });
 
-  server.on("error", (err) => {
-    log(`Server error ${err}`, "error");
-  });
+  return {
+    on: relay.on.bind(relay),
+    start: async () => {
+      if (certService) {
+        // Already prepare a few certs cert for the main domain and first couloir
+        // We don't wait for those requests to complete
+        certService.getCertOnDemand(domain);
+        certService.getCertOnDemand(`couloir.${domain}`);
 
-  return server;
+        await certService.start();
+      }
+
+      await new Promise((resolve, reject) => {
+        relay.on("error", reject);
+        relay.listen(port, () => {
+          log(`Relay server started on port ${port}`, "info");
+          resolve();
+        });
+      });
+    },
+    stop: async () => {
+      await certService?.stop();
+      await new Promise((resolve) => {
+        relay.close(resolve);
+      });
+    },
+  };
 }

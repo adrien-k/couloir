@@ -20,13 +20,19 @@ const mkdir = util.promisify(fs.mkdir);
 const HTTP_SERVER_PORT = 80;
 const CLIENT_KEY_FILE = "acme-client.key";
 
+async function ensureDir(dir) {
+  await mkdir(dir, { recursive: true });
+}
+
 async function findOrCreateKey(certsDirectory) {
+  const keyFile = join(certsDirectory, CLIENT_KEY_FILE);
   try {
-    return readFile(join(certsDirectory, CLIENT_KEY_FILE));
+    return await readFile(keyFile);
   } catch (e) {
     if (e.code === "ENOENT") {
       const key = await acme.crypto.createPrivateKey();
-      await writeFile(join(certsDirectory, CLIENT_KEY_FILE), key);
+      await ensureDir(certsDirectory);
+      await writeFile(keyFile, key);
       return key;
     } else {
       throw e;
@@ -35,6 +41,8 @@ async function findOrCreateKey(certsDirectory) {
 }
 
 async function loadCertificates(certsDirectory) {
+  await ensureDir(certsDirectory);
+
   const certificateStore = {};
   for (const file of await readDir(certsDirectory)) {
     const filePath = join(certsDirectory, file);
@@ -42,7 +50,7 @@ async function loadCertificates(certsDirectory) {
     if (stat.isDirectory()) {
       certificateStore[file] = [
         await readFile(join(filePath, "cert.key")),
-        await readFile(join(filePath, "cert.pem"), 'utf8'),
+        await readFile(join(filePath, "cert.pem"), "utf8"),
       ];
     }
   }
@@ -50,6 +58,7 @@ async function loadCertificates(certsDirectory) {
 }
 
 async function saveCertificate(certsDirectory, servername, key, cert) {
+  await ensureDir(certsDirectory);
   const certDirectory = join(certsDirectory, servername);
   await mkdir(certDirectory, { recursive: true });
   await writeFile(join(certDirectory, "cert.key"), key);
@@ -72,8 +81,10 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
   const absoluteCertsDirectory = certsDirectory
     .replace("~", os.homedir())
     .replace(/^\./, process.cwd());
+
   const pendingDomains = {};
   const challengeResponses = {};
+
   const clientPromise = createClient(absoluteCertsDirectory);
   const certsPromise = loadCertificates(absoluteCertsDirectory);
 
@@ -81,6 +92,10 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
    * On-demand certificate generation using http-01
    */
   async function getCertOnDemand(servername, attempt = 0) {
+    if (!(domain === servername || servername.endsWith(`.${domain}`))) {
+      throw new Error("Invalid servername");
+    }
+
     const client = await clientPromise;
     const certificateStore = await certsPromise;
     const wildcardServername = servername.replace(/^[^.]+\./, "*.");
@@ -113,7 +128,7 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
     });
 
     /* Order certificate */
-    log(`Ordering certificate for ${servername}`);
+    log(`Ordering certificate for ${servername}`, "info");
     const cert = await client.auto({
       csr,
       email,
@@ -166,19 +181,23 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
   });
 
   return {
-    listen: async () => {
-      // Already prepare a few certs cert for the main domain and first couloir
+    start: async () => {
       const certificateStore = await certsPromise;
       if (certificateStore[domain] && certificateStore[`*.${domain}`]) {
         log(`TLS certificates found for ${domain} and *.${domain}`, "info");
         return;
       }
-      getCertOnDemand(domain);
-      getCertOnDemand(`couloir.${domain}`);
 
-      httpServer.listen(HTTP_SERVER_PORT, () => {
-        log(`Cert validation server listening on port ${HTTP_SERVER_PORT}`, "info");
+      return new Promise((resolve, reject) => {
+        httpServer.on("error", reject);
+        httpServer.listen(HTTP_SERVER_PORT, () => {
+          log(`Cert validation server listening on port ${HTTP_SERVER_PORT}`, "info");
+          resolve();
+        });
       });
+    },
+    stop: async () => {
+      httpServer.close();
     },
     SNICallback: async (servername, cb) => {
       try {

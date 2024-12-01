@@ -11,8 +11,9 @@ const packageJson = esRequire("./package.json");
 import { loggerFactory } from "./src/logger.js";
 import relay from "./src/relay.js";
 import expose from "./src/expose.js";
+import logo from "./src/logo.js";
 
-const argvWithLog = argv => ({ ...argv, log: loggerFactory(argv) });
+const argvWithLog = (argv) => ({ ...argv, log: loggerFactory(argv) });
 
 yargs(hideBin(process.argv))
   .scriptName("couloir")
@@ -40,7 +41,8 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .option("certs-directory", {
-          describe: "Directory where to read and write Let's encrypt certs. Start with './' for paths relative to current directory.",
+          describe:
+            "Directory where to read and write Let's encrypt certs. Start with './' for paths relative to current directory.",
           default: "~/.couloir/certs",
         })
         .option("email", {
@@ -49,28 +51,27 @@ yargs(hideBin(process.argv))
         });
     },
     (argv) => {
-      const port = argv.port || (argv.http ? 80 : 443);
-      if (!argv.http && port === 80) {
-        return console.error(
-          "Error: cannot use port 80 when TLS is enabled as it is required for domain validation."
-        );
-      }
-      relay(argvWithLog(argv)).listen(port, () => {
-        console.log(`Relay server started on port ${port}`);
-      });
-    }
+      logo(`Relay Server | Version ${packageJson.version}`);
+      const options = argvWithLog(argv);
+      options.port = argv.port || (argv.http ? 80 : 443);
+      relay(argvWithLog(options)).start();
+    },
   )
   .command(
-    "expose <relay-host> <local-port>",
+    "expose <local-port>",
     "Expose the given local port on the given remote hostname",
-    (yargs) => yargs
-        .positional("relay-host", {
-          describe:
-            "Hostname from which the proxy will be served. Must be a subdomain of the domain passed to the relay command.",
-        })
+    (yargs) =>
+      yargs
         .positional("local-port", {
           describe: "Local port to proxy to.",
           type: "integer",
+        })
+        .option("relay-host", {
+          alias: "on",
+          describe: "Hostname of the relay server.",
+        })
+        .option("name", {
+          describe: "Name for the couloir subdomain. By default it will be couloir.<relay-host>.",
         })
         .option("relay-port", {
           describe: "Port on which the relay is running if not the default port",
@@ -93,30 +94,33 @@ yargs(hideBin(process.argv))
           default: false,
         }),
     (argv) => {
-      expose(argvWithLog(argv)).listen(() => {
-        console.log(`Bound ${argv.localPort} to ${argv.relayHost}:${argv.relayHost}`);
-      });
-    }
+      logo(`Host Server | Version ${packageJson.version}`);
+      const options = argv;
+      options.relayPort = argv.relayPort || (argv.http ? 80 : 443);
+      expose(argvWithLog(argv)).start();
+    },
   )
   .command(
     "wildcard",
     "Generate Let's Encrypt certificate for the given domain and store it in your home directory ~/.couloir/certs \n \
     Use this so that you don't need to run the auto-cert validation server on port 80.",
-    (yargs) => yargs
-    .positional("domain", {
-      describe: "Domain under which to couloir hosts will be created.",
-    })
-      .option("email", {
-        describe: "Email used for Let's Encrypt cert generation",
-        default: "test@example.com",
-      })
-      .option("certs-directory", {
-        describe: "Directory where to read and write Let's encrypt certs. Start with './' for paths relative to current directory.",
-        default: "~/.couloir/certs",
-      }),
+    (yargs) =>
+      yargs
+        .positional("domain", {
+          describe: "Domain under which to couloir hosts will be created.",
+        })
+        .option("email", {
+          describe: "Email used for Let's Encrypt cert generation",
+          default: "test@example.com",
+        })
+        .option("certs-directory", {
+          describe:
+            "Directory where to read and write Let's encrypt certs. Start with './' for paths relative to current directory.",
+          default: "~/.couloir/certs",
+        }),
     (argv) => {
       generateWildcard(argvWithLog(argv));
-    }
+    },
   )
   .option("verbose", {
     alias: "v",

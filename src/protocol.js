@@ -71,7 +71,6 @@ export function onHostToRelayMessage(socket, log, handlers) {
       const [type, payload] = matchCouloirMessage.slice(1);
       log(`Receiving Couloir payload ${type} ${payload}`);
 
-
       const sendResponse = (response) => {
         const jsonResponse = JSON.stringify(response);
         const ack_key = `${type}_ACK`;
