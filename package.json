@@ -12,5 +12,9 @@
   "dependencies": {
     "acme-client": "^5.4.0",
     "yargs": "^17.7.2"
+  },
+  "scripts": {
+    "test": "NODE_EXTRA_CA_CERTS=./tests/certs/ca.pem node --test",
+    "test:only": "npm test -- --test-only"
   }
 }

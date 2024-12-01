@@ -4,66 +4,63 @@
 
 import fs from "fs";
 import os from "os";
-import { join } from "path";
+import tls from "node:tls";
+import { join } from "node:path";
 import http from "node:http";
+import util from "node:util";
 
 import * as acme from "acme-client";
 
+const readFile = util.promisify(fs.readFile);
+const writeFile = util.promisify(fs.writeFile);
+const readDir = util.promisify(fs.readdir);
+const fsStat = util.promisify(fs.stat);
+const mkdir = util.promisify(fs.mkdir);
+
 const HTTP_SERVER_PORT = 80;
-const CONFIG_PATH = join(os.homedir(), ".couloir-tls.json");
+const CLIENT_KEY_FILE = "acme-client.key";
 
-function loadConfig() {
+async function findOrCreateKey(certsDirectory) {
   try {
-    const tlsConfigRaw = fs.readFileSync(CONFIG_PATH);
-    const jsonConfig = JSON.parse(tlsConfigRaw);
-    const certificateStore = {};
-    for (const name of Object.keys(jsonConfig.certificateStore)) {
-      const jsonCert = jsonConfig.certificateStore[name];
-      certificateStore[name] = [Buffer.from(jsonCert[0], "base64"), jsonCert[1]];
-    }
-
-    return {
-      accountKey: Buffer.from(jsonConfig.accountKey, "base64"),
-      certificateStore,
-    };
+    return readFile(join(certsDirectory, CLIENT_KEY_FILE));
   } catch (e) {
     if (e.code === "ENOENT") {
-      return {
-        certificateStore: {},
-      };
+      const key = await acme.crypto.createPrivateKey();
+      await writeFile(join(certsDirectory, CLIENT_KEY_FILE), key);
+      return key;
     } else {
       throw e;
     }
   }
 }
 
-const tlsConfig = loadConfig();
-
-function persistConfig() {
+async function loadCertificates(certsDirectory) {
   const certificateStore = {};
-  for (const name of Object.keys(tlsConfig.certificateStore)) {
-    const cert = tlsConfig.certificateStore[name];
-    certificateStore[name] = [cert[0].toString("base64"), cert[1]];
-  }
-  const jsonConfig = {
-    accountKey: tlsConfig.accountKey.toString("base64"),
-    certificateStore,
-  };
-  fs.writeFile(CONFIG_PATH, JSON.stringify(jsonConfig), (e) => {
-    if (e) {
-      console.error(e);
+  for (const file of await readDir(certsDirectory)) {
+    const filePath = join(certsDirectory, file);
+    const stat = await fsStat(filePath);
+    if (stat.isDirectory()) {
+      certificateStore[file] = [
+        await readFile(join(filePath, "cert.key")),
+        await readFile(join(filePath, "cert.pem"), 'utf8'),
+      ];
     }
-  });
+  }
+  return certificateStore;
 }
 
-async function createClient() {
-  if (!tlsConfig.accountKey) {
-    tlsConfig.accountKey = await acme.crypto.createPrivateKey();
-    persistConfig();
-  }
+async function saveCertificate(certsDirectory, servername, key, cert) {
+  const certDirectory = join(certsDirectory, servername);
+  await mkdir(certDirectory, { recursive: true });
+  await writeFile(join(certDirectory, "cert.key"), key);
+  await writeFile(join(certDirectory, "cert.pem"), cert);
+}
+
+async function createClient(absoluteCertsDirectory) {
+  const accountKey = await findOrCreateKey(absoluteCertsDirectory);
   return new acme.Client({
     directoryUrl: acme.directory.letsencrypt.production,
-    accountKey: tlsConfig.accountKey,
+    accountKey,
   });
 }
 
@@ -71,27 +68,32 @@ async function createClient() {
  * Code inspired from https://github.com/publishlab/node-acme-client/blob/master/examples/http-01/http-01.js
  *
  */
-export function createCertServer({
-  log = (msg) => console.log(msg),
-  email = "test@example.com",
-} = {}) {
+export function createCertServer({ domain, certsDirectory, log, email } = {}) {
+  const absoluteCertsDirectory = certsDirectory
+    .replace("~", os.homedir())
+    .replace(/^\./, process.cwd());
   const pendingDomains = {};
   const challengeResponses = {};
-  const clientPromise = createClient();
+  const clientPromise = createClient(absoluteCertsDirectory);
+  const certsPromise = loadCertificates(absoluteCertsDirectory);
 
   /**
    * On-demand certificate generation using http-01
    */
   async function getCertOnDemand(servername, attempt = 0) {
     const client = await clientPromise;
+    const certificateStore = await certsPromise;
+    const wildcardServername = servername.replace(/^[^.]+\./, "*.");
 
     /* Certificate exists */
-    if (servername in tlsConfig.certificateStore) {
-      return tlsConfig.certificateStore[servername];
+    for (const name of [servername, wildcardServername]) {
+      if (certificateStore[name]) {
+        return certificateStore[name];
+      }
     }
 
     /* Waiting on certificate order to go through */
-    if (servername in pendingDomains) {
+    if (pendingDomains[servername]) {
       if (attempt >= 10) {
         throw new Error(`Gave up waiting on certificate for ${servername}`);
       }
@@ -127,10 +129,10 @@ export function createCertServer({
 
     /* Done, store certificate */
     log(`Certificate for ${servername} created successfully`);
-    tlsConfig.certificateStore[servername] = [key, cert];
-    persistConfig();
+    certificateStore[servername] = [key, cert];
+    await saveCertificate(absoluteCertsDirectory, servername, key, cert);
     delete pendingDomains[servername];
-    return tlsConfig.certificateStore[servername];
+    return [key, cert];
   }
 
   /**
@@ -164,10 +166,29 @@ export function createCertServer({
   });
 
   return {
-    listen: () =>
+    listen: async () => {
+      // Already prepare a few certs cert for the main domain and first couloir
+      const certificateStore = await certsPromise;
+      if (certificateStore[domain] && certificateStore[`*.${domain}`]) {
+        log(`TLS certificates found for ${domain} and *.${domain}`, "info");
+        return;
+      }
+      getCertOnDemand(domain);
+      getCertOnDemand(`couloir.${domain}`);
+
       httpServer.listen(HTTP_SERVER_PORT, () => {
         log(`Cert validation server listening on port ${HTTP_SERVER_PORT}`, "info");
-      }),
+      });
+    },
+    SNICallback: async (servername, cb) => {
+      try {
+        const [key, cert] = await getCertOnDemand(servername);
+        cb(null, tls.createSecureContext({ key, cert }));
+      } catch (e) {
+        log(`Failed to get certificate for ${servername}: ${e.message}`);
+        cb(e);
+      }
+    },
     getCertOnDemand,
   };
 }
