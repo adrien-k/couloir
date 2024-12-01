@@ -10,9 +10,7 @@
 
 Temporarily expose a http local service to the Internet using your own server.
 
-- **Encrpted**: traffic in and out of the relay is encrypted with auto-generated Let's Encrypt TLS certificates.
-- **Low dependencies**: only using `acme-client` to generat TLS certificates
-and `yargs` to parse CLI arguments.
+- **Encrypted**: traffic in and out of the relay is encrypted with auto-generated Let's Encrypt TLS certificates.
 - **Self-contained**: does not require SSH, Nginx, Caddy or other additional services.
 - **No configuration**: Works out-of-the-box. Can be adjusted through a few CLI options.
 
@@ -51,7 +49,7 @@ couloir relay sub.domain.com
 2. Run the local couloir proxy:
 
 ```
-couloir bind my-awesome-local-service.sub.domain.com 3000
+couloir expose my-awesome-local-service.sub.domain.com 3000
 ```
 
 ## Recipes
@@ -60,7 +58,7 @@ couloir bind my-awesome-local-service.sub.domain.com 3000
 
 In this mode, you only need the relay port to be accessible from Internet (80 by default in HTTP mode).
 - On the relay, run `couloir relay sub.domain.com --http`.
-- Locally, run `couloir bind my-service.sub.domain.com 3000 --http`.
+- Locally, run `couloir expose my-service.sub.domain.com 3000 --http`.
 
 ### Run the relay on a different port
 
@@ -69,13 +67,13 @@ still be required for TLS cert validation.
 
 For example, port 3000:
 - On the relay, run `couloir relay sub.domain.com --port 3000`.
-- Locally, run `couloir bind my-service.sub.domain.com 3000 --relay-port 3000`.
+- Locally, run `couloir expose my-service.sub.domain.com 3000 --relay-port 3000`.
 
 ### Override the host header passed to your local server
 
 This is useful if your local server is expecting a Host like 127.0.0.1:3000. For example:
 
-- Locally, run `couloir bind my-service.sub.domain.com 3000 --override-host 127.0.0.1`.
+- Locally, run `couloir expose my-service.sub.domain.com 3000 --override-host 127.0.0.1`.
 
 ### Run the relay as a daemon with pm2
 

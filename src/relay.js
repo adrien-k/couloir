@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { createCertServer } from "./certs.js";
 import { defaultLogger } from "./logger.js";
 import {
-  onHostMessage,
+  onHostToRelayMessage,
   OPEN_COULOIR,
   JOIN_COULOIR,
 } from "./protocol.js";
@@ -127,14 +127,14 @@ export default function relay({
         relaySocket.host = host;
         hosts[host].push(relaySocket);
         log(`Socket (host) connected ${host}#${relaySocket.id}`);
-        sendResponse({}, { keepSocket: true });
+        sendResponse({});
         bindNextSockets(host);
       } else {
         sendResponse({ error: "Invalid couloir key. Please restart your couloir client." })
       }
     }
 
-    onHostMessage(socket, log, {
+    onHostToRelayMessage(socket, log, {
       [OPEN_COULOIR]: onCouloirOpen,
       [JOIN_COULOIR]: onCouloirJoin,
     });

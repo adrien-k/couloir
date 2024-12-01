@@ -20,7 +20,7 @@ async function createRelayConnection({ relayIp, relayHost, relayPort, http }) {
   });
 }
 
-export async function toRelayMessage(bindOptions, key, value, { keepSocketOpen = false } = {}) {
+export async function hostToRelayMessage(bindOptions, key, value, { keepSocketOpen = false } = {}) {
   const { log } = bindOptions;
 
   log(`Sending Couloir message: ${key} ${value}`);
@@ -61,7 +61,7 @@ export async function toRelayMessage(bindOptions, key, value, { keepSocketOpen =
   });
 }
 
-export function onHostMessage(socket, log, handlers) {
+export function onHostToRelayMessage(socket, log, handlers) {
   const dataHandler = (data) => {
     // Couloir message are always first-chunk in sockets. No need to keep listening.
     socket.off("data", dataHandler);
@@ -72,16 +72,12 @@ export function onHostMessage(socket, log, handlers) {
       log(`Receiving Couloir payload ${type} ${payload}`);
 
 
-      const sendResponse = (response, { keepSocket = false } = {}) => {
+      const sendResponse = (response) => {
         const jsonResponse = JSON.stringify(response);
         const ack_key = `${type}_ACK`;
 
         log(`Sending Couloir message ${ack_key} ${jsonResponse}`);
         socket.write(`${ack_key} ${jsonResponse}${MESSAGE_SEPARATOR}`);
-
-        if (!keepSocket) {
-          socket.end();
-        }
       };
 
       handlers[type](payload, sendResponse);

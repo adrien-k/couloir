@@ -4,7 +4,7 @@ import EventEmitter from "node:events";
 import { OPEN_COULOIR, JOIN_COULOIR } from "./protocol.js";
 import { pipeHttpRequest, parseReqHead, parseResHead, serializeReqHead } from "./http.js";
 import { defaultLogger } from "./logger.js";
-import { toRelayMessage } from "./protocol.js";
+import { hostToRelayMessage } from "./protocol.js";
 
 // This defines the number of concurrent socket connections opened with the relay
 // which in turn allows the relay to serve as many requests simultaneously.
@@ -14,7 +14,7 @@ import { toRelayMessage } from "./protocol.js";
 const CONCURRENCY = 5;
 const MAX_CONNECTION_TRIES = 10;
 
-export default function bind(bindOptions) {
+export default function expose(bindOptions) {
   const {
     localHost = "127.0.0.1",
     localPort,
@@ -84,7 +84,7 @@ export default function bind(bindOptions) {
           response: { error },
           responseBuffer,
           socket: proxyHostSocket,
-        } = await toRelayMessage(bindOptions, JOIN_COULOIR, couloirKey, {
+        } = await hostToRelayMessage(bindOptions, JOIN_COULOIR, couloirKey, {
           keepSocketOpen: true,
         });
 
@@ -164,7 +164,7 @@ export default function bind(bindOptions) {
     try {
       const {
         response: { error, host, key },
-      } = await toRelayMessage(bindOptions, OPEN_COULOIR, relayHost);
+      } = await hostToRelayMessage(bindOptions, OPEN_COULOIR, relayHost);
       
       if (error) {
         throw new Error(error);

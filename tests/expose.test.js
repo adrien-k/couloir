@@ -2,7 +2,7 @@ import { describe, it, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
 import tls from "node:tls";
-import bind from "../src/bind.js";
+import expose from "../src/expose.js";
 import relay from "../src/relay.js";
 import { join } from "node:path";
 import { fileURLToPath } from 'url';
@@ -28,7 +28,7 @@ function assertHttpEqual(req, head, body) {
 
 let relayConfig, bindConfig, logs;
 const logFactory = (source) => (msg, level) => {
-  if (level === "error") {
+  if ( level === "error") {
     console.error(`[${source}] ${msg}`);
   } else {
     logs.push(`[${source}] ${msg}`)
@@ -50,7 +50,7 @@ beforeEach(() => {
     relayPort: RELAY_PORT,
     concurrency: 1,
     http: true,
-    log: logFactory("bind"),
+    log: logFactory("expose"),
   };
 });
 
@@ -70,7 +70,7 @@ async function setup(
   const localServer = net.createServer(onLocalConnection);
   const localSockets = [];
   localServer.on("connection", (socket) => localSockets.push(socket));
-  const bindServer = bind(bindConfig);
+  const bindServer = expose(bindConfig);
 
   async function close() {
     bindServer.close();
@@ -242,13 +242,13 @@ it("can take a custom sub-domain", async () => {
 });
 
 
-describe.only("with TLS", () => { 
+describe("with TLS", () => { 
   beforeEach(() => {
     relayConfig.http = false;
     bindConfig.http = false;
   });
 
-  it.only("works as well", async () => {
+  it("works as well", async () => {
     relayConfig.certsDirectory = join(__dirname, "./certs");
   
     const httpRequest =

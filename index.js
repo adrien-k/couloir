@@ -10,7 +10,7 @@ const packageJson = esRequire("./package.json");
 
 import { loggerFactory } from "./src/logger.js";
 import relay from "./src/relay.js";
-import bind from "./src/bind.js";
+import expose from "./src/expose.js";
 
 const argvWithLog = argv => ({ ...argv, log: loggerFactory(argv) });
 
@@ -61,7 +61,7 @@ yargs(hideBin(process.argv))
     }
   )
   .command(
-    "bind <relay-host> <local-port>",
+    "expose <relay-host> <local-port>",
     "Expose the given local port on the given remote hostname",
     (yargs) => yargs
         .positional("relay-host", {
@@ -93,7 +93,7 @@ yargs(hideBin(process.argv))
           default: false,
         }),
     (argv) => {
-      bind(argvWithLog(argv)).listen(() => {
+      expose(argvWithLog(argv)).listen(() => {
         console.log(`Bound ${argv.localPort} to ${argv.relayHost}:${argv.relayHost}`);
       });
     }
