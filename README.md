@@ -10,9 +10,13 @@
 
 Temporarily expose a http local service to the Internet using your own server.
 
-Mostly an experimental project to play with TCP sockets, TLS and HTTP.
+- **Encrpted**: traffic in and out of the relay is encrypted with auto-generated Let's Encrypt TLS certificates.
+- **Low dependencies**: only using `acme-client` to generat TLS certificates
+and `yargs` to parse CLI arguments.
+- **Self-contained**: does not require SSH, Nginx, Caddy or other additional services.
+- **No configuration**: Works out-of-the-box. Can be adjusted through a few CLI options.
 
-_Do not use for anything too serious, there are plenty of more reliable projects to do this!_
+_This is still an alpha version so please do not use it for anything too serious. There are plenty of more reliable projects to do this_
 
 ## Installation
 On both the relay server and your local machine. Make sure both versions match.

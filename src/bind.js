@@ -1,15 +1,16 @@
 import net from "node:net";
 import tls from "node:tls";
+import EventEmitter from "node:events";
 import { OPEN_COULOIR, JOIN_COULOIR } from "./relay.js";
 import { pipeHttpRequest, parseReqHead, parseResHead, serializeReqHead } from "./http.js";
-import { loggerFactory } from "./logger.js";
+import { defaultLogger } from "./logger.js";
 
 // This defines the number of concurrent socket connections opened with the relay
 // which in turn allows the relay to serve as many requests simultaneously.
 //
 // Beyond that limit, requests will just wait for a fee socket. This is also why
 // we disable the keep alive behaviour to ensure sockets are rotating between requests.
-const CONCURRENCY = 10;
+const CONCURRENCY = 5;
 
 function timestamp() {
   const now = new Date();
@@ -18,85 +19,105 @@ function timestamp() {
     .join(":");
 }
 
-export default async function bind(
-  relayHost,
+export default function bind({
   localPort,
-  {
-    verbose = false,
-    localHost = "127.0.0.1",
-    relayPort = 443,
-    overrideHost = null,
-    enableTLS = true,
-  } = {}
-) {
-  const log = loggerFactory({ verbose });
+  relayHost,
+  relayIp,
+  concurrency = CONCURRENCY,
+  localHost = "127.0.0.1",
+  relayPort = 443,
+  overrideHost = null,
+  http = false,
+  log = defaultLogger,
+}) {
+  const eventEmitter = new EventEmitter();
 
-  let socketCount = 0;
-  let localSocketError = false;
+  let closed = false;
+  let sockets = {};
 
-  let createRelayConnection = (cb) => {
-    return enableTLS
-      ? tls.connect({ host: relayHost, port: relayPort, servername: relayHost }, cb)
-      : net.createConnection({ host: relayHost, port: relayPort }, cb);
+  async function createRelayConnection() {
+    return new Promise((resolve, reject) => {
+      const host = relayIp || relayHost;
+      const socket = http
+      ? net.createConnection({ host, port: relayPort }, () => { resolve(socket) })
+      : tls.connect({ host, port: relayPort, servername: relayHost}, () => resolve(socket));
+
+      socket.on("error", reject)
+    })
   };
 
+  // This reference ensures the openSockets routine only runs once at a time.
+  let openSocketsRunningPromise = null;
+  async function openSocketsSafe(couloirKey) {
+    if (!openSocketsRunningPromise) {
+      openSocketsRunningPromise = openSockets(couloirKey).finally(() => {
+        openSocketsRunningPromise = null;
+      });
+    }
+    return openSocketsRunningPromise;
+  }
+
   async function openSockets(couloirKey, try_count = 1) {
-    if (localSocketError) {
+    if (closed) {
       return;
     }
 
     try {
-      while (socketCount < CONCURRENCY) {
-        // Increment before connection to avoid going over the limit while connection happens
-        // as this function may be called concurrently
-        socketCount++;
-        log(`Opening relay socket (${socketCount})`);
-        await connect(couloirKey);
-      }
-    } catch (err) {
-      socketCount--;
-      if (!localSocketError) {
-        if (try_count >= 10) {
-          log(`Error connecting: ${err.message}. Giving up.`, "error");
-          process.exit(1);
+      while (Object.keys(sockets).length < concurrency) {
+        log(`Opening relay socket (${Object.keys(sockets).length + 1}/${concurrency})`);
+        const bidirectionalSocket = await connect(couloirKey);
+
+        if (closed) {
+          // May happen in tight race condition where socket was being opened
+          // while the bind server did shut down. We just close itfrom one end which
+          // should also close the other end
+          bidirectionalSocket.end();
+          return;
         }
 
-        log(`Error connecting: ${err.message}.\nRetrying in 5s`, "error");
-        localSocketError = true;
-        setTimeout(() => {
-          localSocketError = false;
-          openSockets(couloirKey, try_count + 1);
-        }, 5000);
+        sockets[bidirectionalSocket.id] = bidirectionalSocket;
       }
+    } catch (err) {
+      if (try_count >= 10) {
+        log(`Error connecting: ${err.message}. Giving up.`, "error");
+        process.exit(1);
+      }
+
+      log(`Error connecting: ${err.message}.\nRetrying in 5s`, "error");
+      return new Promise((resolve, reject) => {
+        setTimeout(() => openSockets(couloirKey, try_count + 1).then(resolve, reject), 5000);
+      });
     }
   }
 
   async function sendMessage(key, value, { keepSocketOpen = false } = {}) {
     log(`Sending Couloir message: ${key} ${value}`);
     const ackKey = `${key}_ACK`;
+    const socket = await createRelayConnection()
 
     return new Promise((resolve, reject) => {
-      let socket = createRelayConnection(() => {
-        socket.on("data", (data) => {
-          if (data.indexOf(ackKey) === -1) {
-            reject(
-              new Error(`unexpected socket response, this does not seem to be a couloir server.`)
-            );
-          } else {
-            const response = data.toString().replace(`${ackKey} `, "");
-            log(`Receiving Couloir message: ${ackKey} ${response}`);
-            resolve({ response, socket });
-          }
-          if (!keepSocketOpen) {
-            socket.end();
-          }
-        });
+      socket.on("data", (data) => {
+        if (data.indexOf(ackKey) === -1) {
+          reject(
+            new Error(`Unexpected socket response, this does not seem to be a couloir server.`)
+          );
+        } else {
+          const endOfAck = data.indexOf("\r\n\r\n");
+          const response = data.subarray(0, endOfAck).toString().replace(`${ackKey} `, "");
+          const responseBuffer = data.subarray(endOfAck + 4);
+          log(`Receiving Couloir message: ${ackKey} ${response}`);
+          resolve({ response, responseBuffer, socket });
+        }
 
-        // Adding the trailing CRLF so that http servers respond
-        // with 400 more rapidly instead of hanging for the rest of the request.
-        socket.write(`${key} ${value}\r\n\r\n`);
+        if (!keepSocketOpen) {
+          socket.end();
+        }
       });
 
+      // Adding the trailing CRLF so that http servers respond
+      // with 400 more rapidly instead of hanging for the rest of the request.
+      socket.write(`${key} ${value}\r\n\r\n`);
+        
       socket.on("end", () => {
         reject(new Error("Connection closed prematurely"));
       });
@@ -105,62 +126,80 @@ export default async function bind(
         reject(new Error("Connection did not respond in time"));
         socket.end();
       });
-
-      socket.on("error", (err) => {
-        reject(err);
-      });
     });
   }
 
+  let socketIdCounter = 0;
   async function connect(couloirKey) {
+    const id = socketIdCounter++;
+
     return new Promise((resolve, reject) => {
-      const localSocket = net.createConnection({ host: localHost, port: localPort }, () => {
-        sendMessage(JOIN_COULOIR, couloirKey, { keepSocketOpen: true }).then(
-          ({ response, socket: proxyHostSocket }) => {
-            const { error } = JSON.parse(response);
-            if (error) {
-              proxyHostSocket.end();
-              return reject(new Error(error));
+      const localSocket = net.createConnection({ host: localHost, port: localPort }, async () => {
+        const { response, responseBuffer, socket: proxyHostSocket } = await sendMessage(JOIN_COULOIR, couloirKey, {
+          keepSocketOpen: true,
+        });
+
+        const { error } = JSON.parse(response);
+        if (error) {
+          proxyHostSocket.end();
+          return reject(new Error(error));
+        }
+
+        // This is a singular socket so we can init the access log on the request
+        // and log it on the response without conflicts.
+        let accessLog = "";
+        let reqStart;
+
+        pipeHttpRequest(proxyHostSocket, localSocket, {
+          initialBuffer: responseBuffer,
+          onHead: (head) => {
+            reqStart = Date.now();
+            const headParts = parseReqHead(head);
+            const { method, path } = headParts;
+            accessLog = `[${timestamp()}] ${method} ${path}`;
+
+            if (overrideHost) {
+              headParts.headers["Host"] = [overrideHost];
             }
+            // Remove http 1.1 keep-alive behaviour to ensure the socket is quickly re-created for other client sockets
+            // and to avoid parsing headers of the follow-up request that may go through the same socket.
+            headParts.headers["Connection"] = ["close"];
+            return serializeReqHead(headParts);
+          },
+          onEnd: () => {
+            log(`Relay proxy socket closed`);
+            localSocket.end()
+          }
+        });
 
-            let accessLog = "";
-            let reqStart;
-
-            pipeHttpRequest(proxyHostSocket, localSocket, (head) => {
-              reqStart = Date.now();
-              const headParts = parseReqHead(head);
-              const { method, path } = headParts;
-              accessLog += `[${timestamp()}] ${method} ${path}`;
-
-              if (overrideHost) {
-                headParts.headers["Host"] = [overrideHost];
-              }
-              // Remove http 1.1 keep-alive behaviour to ensure the socket is quickly re-created for other client sockets
-              // and to avoid parsing headers of the follow-up request that may go through the same socket.
-              headParts.headers["Connection"] = ["close"];
-              return serializeReqHead(headParts);
-            });
-
-            // This has to come first so that we open the next socket before the proxyHostSocket is
-            // closed by `pipeHttpRequest`.
+        pipeHttpRequest(localSocket, proxyHostSocket, {
+          onHead: (head) => {
+            const { status } = parseResHead(head);
+            accessLog += ` -> ${status} (${Date.now() - reqStart} ms)`;
+            log(accessLog, "info");
+            return head;
+          },
+          onEnd: async () => {
+            log(`Local socket closed, closing proxy socket (current: ${Object.keys(sockets).length})`);
+            delete sockets[id];
+            // We open the next socket before the proxyHostSocket is close
             // This way we ensure that the number of proxy host sockets does not reach 0 which would close
             // the couloir.
-            localSocket.on("end", () => {
-              log(`Relay socket closed (current: ${socketCount})`);
-              socketCount--;
-              openSockets(couloirKey);
-            });
+            await openSocketsSafe(couloirKey);
+            proxyHostSocket.end();
+          },
+        });
 
-            pipeHttpRequest(localSocket, proxyHostSocket, (head) => {
-              const { status } = parseResHead(head);
-              accessLog += ` -> ${status} (${Date.now() - reqStart} ms)`;
-              log(accessLog, "info");
-              return head;
-            });
-
-            resolve();
-          }
-        );
+        const bidirectionalSocket = {
+          id,
+          localSocket,
+          proxyHostSocket,
+          end: () => {
+            localSocket.end();
+            proxyHostSocket.end();
+          },
+        };
+        resolve(bidirectionalSocket);
       });
 
       localSocket.on("error", (err) => {
@@ -169,22 +208,42 @@ export default async function bind(
     });
   }
 
-  try {
-    const { response } = await sendMessage(OPEN_COULOIR, relayHost);
-    log(``);
-    const { host, key } = JSON.parse(response);
-    log(
-      `Couloir opened on ${new URL(`http${enableTLS ? "s" : ""}://${host}:${relayPort}`)}`,
-      "info"
-    );
-    openSockets(key);
-  } catch (err) {
-    console.error(`Error connecting to relay server`);
-    if (verbose) {
-      console.error(err.stack);
-    } else {
-      console.error(err.message);
+  async function initCouloir() {
+    try {
+      const { response } = await sendMessage(OPEN_COULOIR, relayHost);
+      const { host, key } = JSON.parse(response);
+      log(`Couloir opened on ${new URL(`http${http ? "" : "s"}://${host}:${relayPort}`)}`, "info");
+      await openSocketsSafe(key);
+      eventEmitter.emit("ready");
+    } catch (err) {
+      eventEmitter.emit("error", err);
     }
-    process.exit(1);
   }
+
+  eventEmitter.listen = (cb) => {
+    initCouloir();
+    eventEmitter.once("ready", cb);
+    return eventEmitter;
+  };
+
+  eventEmitter.close = (cb) => {
+    let cbCount = 0
+    const refCountingCb = () => {
+      cbCount++;
+      return () => {
+        cbCount--;
+        if (cbCount === 0) {
+          cb && cb()
+        }
+      }
+    }
+
+    closed = true;
+    for (const socket of Object.values(sockets)) {
+      socket.localSocket.end(refCountingCb());
+      socket.proxyHostSocket.end(refCountingCb());
+    }
+  };
+
+  return eventEmitter;
 }
