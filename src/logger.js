@@ -7,8 +7,8 @@ export function timestamp() {
 
 export function loggerFactory({ verbose }) {
   return function log(msg, level = "debug") {
-    if (level === "debug" || verbose) {
-      return
+    if (level === "debug" && !verbose) {
+      return;
     }
     defaultLogger(msg, level);
   };

@@ -1,6 +1,4 @@
 import net from "node:net";
-import tls from "node:tls";
-import EventEmitter from "node:events";
 import { OPEN_COULOIR, JOIN_COULOIR } from "./protocol.js";
 import { pipeHttpRequest, parseReqHead, parseResHead, serializeReqHead } from "./http.js";
 import { defaultLogger } from "./logger.js";
@@ -16,6 +14,7 @@ const MAX_CONNECTION_TRIES = 10;
 
 export default function expose(bindOptions) {
   const {
+    name,
     localHost = "127.0.0.1",
     localPort,
     relayHost,
@@ -25,8 +24,6 @@ export default function expose(bindOptions) {
     http = false,
     log = defaultLogger,
   } = bindOptions;
-
-  const eventEmitter = new EventEmitter();
 
   let closed = false;
   let activeSockets = {};
@@ -66,8 +63,8 @@ export default function expose(bindOptions) {
       }
 
       log(
-        `Error connecting: ${err.message}.\nRetrying in 5s (${try_count}/${MAX_CONNECTION_TRIES})`,
-        "error"
+        `Error connecting: ${err.message}.\nRetrying in 5s (${try_count + 1}/${MAX_CONNECTION_TRIES})`,
+        "error",
       );
       await new Promise((resolve) => setTimeout(resolve, 5000));
       return openSockets(couloirKey, try_count + 1);
@@ -129,9 +126,7 @@ export default function expose(bindOptions) {
           },
           onEnd: async () => {
             log(
-              `Local socket closed, closing proxy socket (current: ${
-                Object.keys(activeSockets).length
-              })`
+              `Local socket closed, closing proxy socket (current: ${Object.keys(activeSockets).length})`,
             );
             delete activeSockets[id];
             // We open the next socket before the proxyHostSocket is close
@@ -161,36 +156,43 @@ export default function expose(bindOptions) {
   }
 
   async function initCouloir() {
-    try {
-      const {
-        response: { error, host, key },
-      } = await hostToRelayMessage(bindOptions, OPEN_COULOIR, relayHost);
-      
-      if (error) {
-        throw new Error(error);
-      }
-      
-      log(`Couloir opened on ${new URL(`http${http ? "" : "s"}://${host}:${relayPort}`)}`, "info");
-      await openSocketsSafe(key);
-      eventEmitter.emit("ready");
-    } catch (err) {
-      eventEmitter.emit("error", err);
+    let requestedCouloirHost = relayHost;
+    if (name) {
+      requestedCouloirHost = `${name}.${relayHost}`;
     }
+    const {
+      response: { error, host, key },
+      socket,
+    } = await hostToRelayMessage(bindOptions, OPEN_COULOIR, requestedCouloirHost, {
+      keepSocketOpen: true,
+    });
+
+    if (error) {
+      throw new Error(error);
+    }
+
+    await openSocketsSafe(key);
+    // Wait for couloir sockets to be opened before closing the opening one
+    // to ensure the couloir is not closed on the relay by reaching 0 activeSockets.
+    socket.end();
+    return host;
   }
 
-  eventEmitter.listen = (cb) => {
-    initCouloir();
-    eventEmitter.once("ready", cb);
-    return eventEmitter;
-  };
+  return {
+    start: async () => {
+      const host = await initCouloir();
+      const relayUrl = new URL(`http://${host}:${relayPort}`);
+      relayUrl.protocol = http ? "http" : "https";
+      const hostUrl = new URL(`http://${localHost}:${localPort}`);
+      log(`Couloir opened: ${relayUrl} => ${hostUrl}`, "info");
+    },
 
-  eventEmitter.close = () => {
-    closed = true;
-    for (const socket of Object.values(activeSockets)) {
-      socket.localSocket.end();
-      socket.proxyHostSocket.end();
-    }
+    stop: async () => {
+      closed = true;
+      for (const socket of Object.values(activeSockets)) {
+        socket.localSocket.end();
+        socket.proxyHostSocket.end();
+      }
+    },
   };
-
-  return eventEmitter;
 }
