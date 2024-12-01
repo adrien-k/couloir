@@ -4,13 +4,15 @@ import crypto from "node:crypto";
 
 import { createCertServer } from "./certs.js";
 import { defaultLogger } from "./logger.js";
+import {
+  onHostMessage,
+  OPEN_COULOIR,
+  JOIN_COULOIR,
+} from "./protocol.js";
 
-export const OPEN_COULOIR = "OPEN_COULOIR";
-export const JOIN_COULOIR = "JOIN_COULOIR";
-const COULOIR_MATCHER = /^([A-Z]+_COULOIR) (.*)$/m;
 const HOST_MATCH = /\r\nHost: (.+)\r\n/;
 const TYPE_HOST = "host";
-const TYPE_HOST_INIT = "init";
+const TYPE_HOST_OPEN = "host_open";
 const TYPE_CLIENT = "client";
 
 export default function relay({
@@ -26,86 +28,6 @@ export default function relay({
   const clients = {};
   const keyToHost = {};
 
-  function sendCouloirResponse(socket, key, response, { keepSocket = false } = {}) {
-    if (typeof response === "object") {
-      response = JSON.stringify(response);
-    }
-    const ack_key = `${key}_ACK`;
-
-    log(`Sending Couloir message ${ack_key} ${response}`);
-    socket.write(`${ack_key} ${response}\r\n\r\n`);
-
-    if (!keepSocket) {
-      socket.end();
-    }
-  }
-
-  function onCouloirMessage(relaySocket, [messageKey, message]) {
-    log(`Receiving Couloir message ${messageKey} ${message}`);
-    const { socket } = relaySocket;
-    const response = {};
-
-    if (messageKey === OPEN_COULOIR) {
-      relaySocket.type = TYPE_HOST_INIT;
-      let host = message;
-
-      if (!host.endsWith(`.${domain}`)) {
-        host = `couloir${couloirCounter > 1 ? couloirCounter : ""}.${domain}`;
-      }
-
-      if (hosts[host]) {
-        response.error = `Couloir host ${host} is already opened`;
-      }
-
-      if (!response.error) {
-        couloirCounter++;
-        response.host = host;
-        const key = (response.key = crypto.randomBytes(24).toString("hex"));
-        log(`New couloir host ${host} opened by #${relaySocket.id}`, "info");
-
-        relaySocket.host = host;
-        keyToHost[key] = host;
-        hosts[host] = [];
-        clients[host] = [];
-      }
-
-      sendCouloirResponse(socket, messageKey, response);
-      return;
-    }
-
-    if (messageKey === JOIN_COULOIR) {
-      relaySocket.type = TYPE_HOST;
-      const key = message;
-      const host = keyToHost[key];
-
-      if (host) {
-        relaySocket.host = host;
-        hosts[host].push(relaySocket);
-        log(`Socket (host) connected ${host}#${relaySocket.id}`);
-        sendCouloirResponse(socket, messageKey, response, { keepSocket: true });
-        bindNextSockets(host);
-      } else {
-        response.error = "Invalid couloir key. Please restart your couloir client.";
-        sendCouloirResponse(socket, messageKey, response);
-      }
-    }
-  }
-
-  function bindNextSockets(host) {
-    const pendingHosts = hosts[host].filter(({ busy }) => !busy);
-
-    log(`Binding sockets clients:${clients[host].length}, hosts: ${pendingHosts.length}`);
-    while (clients[host].length && pendingHosts.length) {
-      const clientSocket = clients[host].shift();
-      const hostSocket = pendingHosts[0];
-      clientSocket.busy = hostSocket.busy = true;
-      clientSocket.socket.pipe(hostSocket.socket);
-      // Write the data that has already been consumed
-      hostSocket.socket.write(clientSocket.requestBuffer);
-      hostSocket.socket.pipe(clientSocket.socket);
-      bindNextSockets(host);
-    }
-  }
   let certServer;
 
   if (!http) {
@@ -123,6 +45,38 @@ export default function relay({
     }
   };
 
+  function closeCouloirIfEmpty(host) {
+    if (hosts[host].length > 0) {
+      return;
+    }
+
+    log(`Closing couloir host ${host}`);
+    delete hosts[host];
+    delete clients[host];
+    for (const key of Object.keys(keyToHost)) {
+      if (keyToHost[key] === host) {
+        delete keyToHost[key];
+      }
+    }
+  }
+
+  function bindNextSockets(host) {
+    const pendingHosts = hosts[host].filter(({ busy }) => !busy);
+
+    log(`Binding sockets clients:${clients[host].length}, hosts: ${pendingHosts.length}`);
+    while (clients[host].length && pendingHosts.length) {
+      const clientSocket = clients[host].shift();
+      // We keep the host in place while it is busy to avoid closing a couloir that may look empty.
+      const hostSocket = pendingHosts[0];
+      clientSocket.busy = hostSocket.busy = true;
+      clientSocket.socket.pipe(hostSocket.socket);
+      // Write the data that has already been consumed
+      hostSocket.socket.write(clientSocket.requestBuffer);
+      hostSocket.socket.pipe(clientSocket.socket);
+      bindNextSockets(host);
+    }
+  }
+
   const server = createRelayServer((socket) => {
     const id = socketCounter++;
 
@@ -130,8 +84,8 @@ export default function relay({
     // They are stored in either `hosts` or `clients` hashes respectively and pulled by bindNextSockets
     const relaySocket = {
       id,
-      socket: socket,
-      // Until we identify which couloir host this socket belongs to.
+      socket,
+      // Null until we identify which couloir host this socket belongs to.
       host: null,
       // In case some data is already read from the client socket before piping to the host
       // we keep it aside to write it first.
@@ -142,38 +96,55 @@ export default function relay({
       busy: false,
     };
 
-    socket.on("end", () => {
-      log(`Socket (${relaySocket.type}) disconnected ${relaySocket.host}#${relaySocket.id}`);
+    function onCouloirOpen(host, sendResponse) {
+      relaySocket.type = TYPE_HOST_OPEN;
 
-      const host = relaySocket.host;
-      if (host && relaySocket.type === TYPE_HOST && hosts[host]) {
-        // Ensure we don't leave a dead socket in the available hosts
-        hosts[host] = hosts[host].filter(({ id }) => id !== relaySocket.id);
-        if (hosts[host].length === 0) {
-          log(`Closing couloir host ${host}`);
-          delete hosts[host];
-          delete clients[host];
-          for (const key of Object.keys(keyToHost)) {
-            if (keyToHost[key] === host) {
-              delete keyToHost[key];
-            }
-          }
-        }
+      if (!host.endsWith(`.${domain}`)) {
+        host = `couloir${couloirCounter > 1 ? couloirCounter : ""}.${domain}`;
       }
+      
+      if (hosts[host]) {
+        return sendResponse({error: `Couloir host ${host} is already opened`})
+      }
+      
+      couloirCounter++;
+      const key =  crypto.randomBytes(24).toString("hex")
+      log(`New couloir host ${host} opened by #${relaySocket.id}`, "info");
+
+      relaySocket.host = host;
+      keyToHost[key] = host;
+      hosts[host] = [];
+      clients[host] = [];
+      
+      sendResponse({ key, host });
+    }
+
+    function onCouloirJoin(key, sendResponse) {
+      relaySocket.type = TYPE_HOST;
+      const host = keyToHost[key];
+
+      if (host) {
+        relaySocket.host = host;
+        hosts[host].push(relaySocket);
+        log(`Socket (host) connected ${host}#${relaySocket.id}`);
+        sendResponse({}, { keepSocket: true });
+        bindNextSockets(host);
+      } else {
+        sendResponse({ error: "Invalid couloir key. Please restart your couloir client." })
+      }
+    }
+
+    onHostMessage(socket, log, {
+      [OPEN_COULOIR]: onCouloirOpen,
+      [JOIN_COULOIR]: onCouloirJoin,
     });
-
-    const onSocketData = (data) => {
-      const dataString = data.toString();
-
-      const matchCouloirMessage = dataString.match(COULOIR_MATCHER);
-      if (matchCouloirMessage) {
-        socket.off("data", onSocketData);
-        onCouloirMessage(relaySocket, matchCouloirMessage.slice(1));
-        return;
+    
+    const onSocketClientData = (data) => {
+      if (relaySocket.type === TYPE_HOST) {
+        return socket.off("data", onSocketClientData);
       }
 
       relaySocket.requestBuffer = Buffer.concat([relaySocket.requestBuffer, data]);
-
       const headLastByte = relaySocket.requestBuffer.indexOf("\r\n\r\n");
 
       // Wait for the end of head
@@ -193,15 +164,27 @@ export default function relay({
 
         bindNextSockets(host);
 
-        // No need to look further in request body
-        socket.off("data", onSocketData);
+        // No need to look further in socket stream
+        socket.off("data", onSocketClientData);
       } else {
         socket.write("HTTP/1.1 404 Not found\r\n\r\nNot found");
         socket.end();
       }
     };
 
-    socket.on("data", onSocketData);
+    socket.on("data", onSocketClientData);
+
+    socket.on("end", () => {
+      log(`Socket (${relaySocket.type}) disconnected ${relaySocket.host}#${relaySocket.id}`);
+
+      const host = relaySocket.host;
+      if (host && relaySocket.type === TYPE_HOST && hosts[host]) {
+        // Ensure we don't leave a dead socket in the available hosts
+        hosts[host] = hosts[host].filter(({ id }) => id !== relaySocket.id);
+        closeCouloirIfEmpty(host);
+      }
+    });
+
     socket.on("error", (err) => {
       log(err, "error");
     });
