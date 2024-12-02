@@ -85,18 +85,17 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
   const pendingDomains = {};
   const challengeResponses = {};
 
-  const clientPromise = createClient(absoluteCertsDirectory);
   const certsPromise = loadCertificates(absoluteCertsDirectory);
 
   /**
    * On-demand certificate generation using http-01
    */
+  let client;
   async function getCertOnDemand(servername, attempt = 0) {
     if (!(domain === servername || servername.endsWith(`.${domain}`))) {
       throw new Error("Invalid servername");
     }
 
-    const client = await clientPromise;
     const certificateStore = await certsPromise;
     const wildcardServername = servername.replace(/^[^.]+\./, "*.");
 
@@ -105,6 +104,10 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
       if (certificateStore[name]) {
         return certificateStore[name];
       }
+    }
+
+    if (!client) {
+      client = await createClient(absoluteCertsDirectory);
     }
 
     /* Waiting on certificate order to go through */
@@ -197,7 +200,7 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
       });
     },
     stop: async () => {
-      httpServer.close();
+      return new Promise((r) => httpServer.close(r));
     },
     SNICallback: async (servername, cb) => {
       try {

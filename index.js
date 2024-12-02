@@ -18,6 +18,11 @@ const argvWithLog = (argv) => ({ ...argv, log: loggerFactory(argv) });
 yargs(hideBin(process.argv))
   .scriptName("couloir")
   .version(false)
+  .middleware((argv) => ({
+    ...argv,
+    relayPort: argv.relayPort || (argv.http ? 80 : 443),
+    log: loggerFactory(argv),
+  }))
   .command("version", "Show the current version", () => {
     console.log(packageJson.version);
   })
@@ -31,7 +36,8 @@ yargs(hideBin(process.argv))
         .positional("domain", {
           describe: "Domain under which to couloir hosts will be created.",
         })
-        .option("port", {
+        .option("relay-port", {
+          alias: "port",
           describe: "Port on which the relay will be exposed. Default 443, or 80 in HTTP mode.",
           type: "integer",
         })
@@ -50,11 +56,9 @@ yargs(hideBin(process.argv))
           default: "test@example.com",
         });
     },
-    (argv) => {
+    async (argv) => {
       logo(`Relay Server | Version ${packageJson.version}`);
-      const options = argvWithLog(argv);
-      options.port = argv.port || (argv.http ? 80 : 443);
-      relay(argvWithLog(options)).start();
+      await relay(argvWithLog(argv)).start();
     },
   )
   .command(
@@ -93,11 +97,9 @@ yargs(hideBin(process.argv))
           type: "boolean",
           default: false,
         }),
-    (argv) => {
+    async (argv) => {
       logo(`Host Server | Version ${packageJson.version}`);
-      const options = argv;
-      options.relayPort = argv.relayPort || (argv.http ? 80 : 443);
-      expose(argvWithLog(argv)).start();
+      await expose(argvWithLog(argv)).start();
     },
   )
   .command(
@@ -128,5 +130,15 @@ yargs(hideBin(process.argv))
     default: false,
   })
   .demandCommand(1)
+  .fail((msg, err, yargs) => {
+    if (msg) {
+      console.log(yargs.help());
+      console.error("\n" + msg);
+    } else if (err) {
+      console.error(err.message);
+    }
+    process.exit(-1);
+  })
+  .showHelpOnFail(false)
   .strict()
   .parse();
