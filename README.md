@@ -13,6 +13,7 @@ Temporarily expose a http local service to the Internet using your own server.
 - **Encrypted**: traffic in and out of the relay is encrypted with auto-generated Let's Encrypt TLS certificates.
 - **Self-contained**: does not require any anything else (SSH, Nginx, Caddy, ...).
 - **No configuration**: works out-of-the-box. Can be adjusted through a few CLI options.
+- **Compatible with Websockets**
 
 _This is still an alpha version so please do not use it for anything too serious. There are plenty of more reliable projects to do this_
 

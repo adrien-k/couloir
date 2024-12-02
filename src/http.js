@@ -50,6 +50,7 @@ class HttpHeadParserTransform extends Transform {
     this.onHead = onHead;
     this.headDone = false;
     this.headBuffer = Buffer.from([]);
+    this.websocket = false;
   }
 
   reset() {
@@ -58,11 +59,11 @@ class HttpHeadParserTransform extends Transform {
   }
 
   _transform(chunk, _encoding, callback) {
-    if (this.headDone) {
+    if (this.headDone || this.websocket) {
       this.push(chunk);
       return callback();
     }
-
+    
     this.headBuffer = Buffer.concat([this.headBuffer, chunk]);
 
     const bodySeparator = this.headBuffer.indexOf("\r\n\r\n");
@@ -71,6 +72,10 @@ class HttpHeadParserTransform extends Transform {
       const bodyChunk = this.headBuffer.subarray(bodySeparator);
       const head = this.headBuffer.subarray(0, bodySeparator).toString("utf8");
       const newHead = this.onHead(head);
+
+      const { headers } = parseHttp(newHead);
+      this.websocket = headers["Upgrade"]?.[0]?.toLowerCase() === "websocket";
+
       this.headDone = true;
       this.push(Buffer.concat([Buffer.from(newHead), bodyChunk]));
     }
