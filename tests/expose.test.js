@@ -1,4 +1,4 @@
-import { describe, it, before, beforeEach } from "node:test";
+import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
 import tls from "node:tls";
@@ -58,11 +58,15 @@ beforeEach(() => {
 async function setup(
   {
     httpResponse = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar",
+    keepAlive = false,
     onLocalConnection = (socket) => {
       socket.on("data", (data) => {
         localServerReceived.push(data);
-        socket.end(httpResponse);
-        socket.destroy();
+        socket.write(httpResponse);
+        if (!keepAlive) {
+          socket.end();
+          socket.destroy();
+        }
       });
     },
   },
@@ -91,17 +95,25 @@ async function setup(
     await relayServer.stop({ force: true });
   }
 }
-
-async function sendRelayRequest(httpRequest) {
+async function createRelayConnection() {
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection({ port: RELAY_PORT }, () => {
-      socket.on("data", (data) => {
-        // socket.end();
-        resolve(data);
-      });
-      socket.write(httpRequest);
-    });
+    const socket = net.createConnection({ port: RELAY_PORT }, () => resolve(socket));
     socket.on("error", reject);
+  });
+}
+
+async function sendRelayRequest(httpRequest, { socket } = {}) {
+  socket = socket || (await createRelayConnection());
+  return new Promise((resolve) => {
+    let onData;
+    socket.on(
+      "data",
+      (onData = (data) => {
+        socket.off("data", onData);
+        resolve(data);
+      }),
+    );
+    socket.write(httpRequest);
   });
 }
 
@@ -124,7 +136,7 @@ it("tunnels http request/response from relay to local server and back", async ()
   });
 });
 
-it("can handle multiple sockets in series when reaching max maxConcurrency", async () => {
+it.only("can handle multiple sockets in series when reaching max maxConcurrency", async () => {
   const httpRequest =
     "GET / HTTP/1.1\r\nHost: couloir.test.local\r\nConnection: keep-alive\r\n\r\nfoo";
   const httpResponse = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar";
@@ -205,6 +217,28 @@ it("can take a custom sub-domain", async () => {
   await setup({}, async () => {
     const response = await sendRelayRequest(httpRequest);
     assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
+  });
+});
+
+it("can override the host header on multiple requests via the same socket", async () => {
+  bindConfig.overrideHost = "my-other-domain";
+
+  const httpRequest = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo";
+
+  await setup({ keepAlive: true }, async () => {
+    const socket = await createRelayConnection();
+    const response1 = await sendRelayRequest(httpRequest, { socket });
+    const response2 = await sendRelayRequest(httpRequest, { socket });
+    assert.equal(
+      localServerReceived[0].toString(),
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
+    );
+    assert.equal(
+      localServerReceived[1].toString(),
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
+    );
+    assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
+    assert.equal(response2.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
   });
 });
 

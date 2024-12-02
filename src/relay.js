@@ -93,7 +93,7 @@ export default function relay({
         return;
       }
 
-      relaySocket.log("Closing couloir");
+      relaySocket.log("Closing couloir", "info");
       delete hosts[host];
       delete clients[host];
       for (const key of Object.keys(keyToHost)) {
@@ -108,6 +108,7 @@ export default function relay({
 
       if (!host.endsWith(`.${domain}`)) {
         host = `couloir${couloirCounter > 1 ? couloirCounter : ""}.${domain}`;
+        couloirCounter++;
       }
 
       if (hosts[host]) {
@@ -116,9 +117,10 @@ export default function relay({
         });
       }
 
-      couloirCounter++;
+      relaySocket.host = host;
+
       const key = crypto.randomBytes(24).toString("hex");
-      relaySocket.log(`New couloir opened`, "info");
+      relaySocket.log(`Couloir opened`, "info");
 
       if (certService) {
         // Already start the let's encrypt cert generation.
@@ -126,7 +128,6 @@ export default function relay({
         certService.getCertOnDemand(host);
       }
 
-      relaySocket.host = host;
       keyToHost[key] = host;
       hosts[host] = [];
       clients[host] = [];

@@ -1,3 +1,20 @@
+import { Transform } from "node:stream";
+
+export function parseHttp(head) {
+  const headLines = head.replace(/\r\n$/, "").split("\r\n");
+  return { startLine: headLines[0], headers: parseHeaders(headLines.slice(1)) };
+}
+
+export function serializeHttp({ startLine, headers }) {
+  let head = startLine;
+  for (const key of Object.keys(headers)) {
+    for (const value of headers[key]) {
+      head += `\r\n${key}: ${value}`;
+    }
+  }
+  return head;
+}
+
 function parseHeaders(headerLines) {
   const headers = {};
   for (const line of headerLines) {
@@ -11,69 +28,113 @@ function parseHeaders(headerLines) {
 }
 
 export function parseReqHead(head) {
-  const headLines = head.replace(/\r\n$/, "").split("\r\n");
-  const [method, path, version] = headLines[0].split(" ");
-  const headers = parseHeaders(headLines.slice(1));
+  const { startLine, headers } = parseHttp(head);
+  const [method, path, version] = startLine.split(" ");
   return { version, method, path, headers };
 }
 
 export function serializeReqHead({ method, path, version, headers }) {
   let head = [method, path, version].join(" ");
-  for (const key of Object.keys(headers)) {
-    for (const value of headers[key]) {
-      head += `\r\n${key}: ${value}`;
-    }
-  }
-  return head;
+  return serializeHttp({ startLine: head, headers });
 }
 
 export function parseResHead(head) {
-  const headLines = head.split("\r\n");
-  const [version, status, statusMessage] = headLines[0].split(" ");
-  const headers = parseHeaders(headLines.slice(1));
+  const { startLine, headers } = parseHttp(head);
+  const [version, status, statusMessage] = startLine.split(" ");
   return { version, status, statusMessage, headers };
 }
 
-export function pipeHttpRequest(
-  source,
-  targetOrOnFirstByteFn,
-  { initialBuffer, onHead = (h) => h, onEnd = ({ target }) => target.end() } = {},
-) {
-  let headBuffer = Buffer.from([]);
-  let headDone = false;
-  let target = targetOrOnFirstByteFn;
-
-  const onData = async (data) => {
-    if (!data.length) {
-      return;
-    }
-
-    if (typeof target === "function") {
-      target = await target();
-    }
-
-    if (!headDone) {
-      headBuffer = Buffer.concat([headBuffer, data]);
-
-      const bodySeparator = headBuffer.indexOf("\r\n\r\n");
-      if (bodySeparator > -1) {
-        // +2 to include the last header CRLF.
-        const bodyChunk = headBuffer.subarray(bodySeparator);
-        headBuffer = headBuffer.slice(0, bodySeparator);
-        const newHead = onHead(headBuffer.toString("utf8"));
-        headDone = true;
-        target.write(Buffer.concat([Buffer.from(newHead), bodyChunk]));
-      }
-    } else {
-      target.write(data);
-    }
-
-    source.on("end", () => onEnd({ source, target }));
-  };
-
-  if (initialBuffer) {
-    onData(initialBuffer);
+class HttpHeadParserTransform extends Transform {
+  constructor(onHead) {
+    super();
+    this.onHead = onHead;
+    this.headDone = false;
+    this.headBuffer = Buffer.from([]);
   }
 
-  source.on("data", onData);
+  reset() {
+    this.headDone = false;
+    this.headBuffer = Buffer.from([]);
+  }
+
+  _transform(chunk, _encoding, callback) {
+    if (this.headDone) {
+      this.push(chunk);
+      return callback();
+    }
+
+    this.headBuffer = Buffer.concat([this.headBuffer, chunk]);
+
+    const bodySeparator = this.headBuffer.indexOf("\r\n\r\n");
+    if (bodySeparator > -1) {
+      // +2 to include the last header CRLF.
+      const bodyChunk = this.headBuffer.subarray(bodySeparator);
+      const head = this.headBuffer.subarray(0, bodySeparator).toString("utf8");
+      const newHead = this.onHead(head);
+      this.headDone = true;
+      this.push(Buffer.concat([Buffer.from(newHead), bodyChunk]));
+    }
+
+    callback();
+  }
+}
+
+export function proxyHttp(
+  clientSocket,
+  serverSocketFn,
+  {
+    initialBuffer = Buffer.from([]),
+    onRequestHead,
+    onClientSocketEnd,
+    onResponseHead,
+    onServerSocketEnd,
+    log,
+  },
+) {
+  const requestHeadParser = new HttpHeadParserTransform(onRequestHead);
+  const responseHeadParser = new HttpHeadParserTransform(onResponseHead);
+
+  let serverSocket;
+
+  const setupServerSocket = async () => {
+    serverSocket = serverSocketFn();
+    await new Promise((resolve) => serverSocket.on("connect", resolve));
+
+    serverSocket.on("error", (err) => {
+      log(`Failed to connect to local server: ${err.message}`, "error");
+      process.exit(1);
+    });
+
+    serverSocket.on("data", (data) => {
+      requestHeadParser.reset();
+      responseHeadParser.write(data);
+    });
+
+    serverSocket.on("end", async () => {
+      await onServerSocketEnd();
+      responseHeadParser.end();
+    });
+
+    requestHeadParser.pipe(serverSocket);
+  };
+
+  const onClientData = async (data) => {
+    if (!serverSocket) {
+      await setupServerSocket();
+    }
+
+    responseHeadParser.reset();
+    requestHeadParser.write(data);
+  };
+
+  if (initialBuffer?.length) {
+    onClientData(initialBuffer);
+  }
+
+  responseHeadParser.pipe(clientSocket);
+  clientSocket.on("data", onClientData);
+  clientSocket.on("end", async () => {
+    await onClientSocketEnd();
+    requestHeadParser.end();
+  });
 }
