@@ -70,7 +70,7 @@ async function setup(
       });
     },
   },
-  testFn,
+  testFn
 ) {
   const relayServer = relay(relayConfig);
   const localServer = net.createServer(onLocalConnection);
@@ -111,7 +111,7 @@ async function sendRelayRequest(httpRequest, { socket } = {}) {
       (onData = (data) => {
         socket.off("data", onData);
         resolve(data);
-      }),
+      })
     );
     socket.write(httpRequest);
   });
@@ -130,13 +130,13 @@ it("tunnels http request/response from relay to local server and back", async ()
     assertHttpEqual(
       localServerReceived[0],
       "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n",
-      BINARY_BODY,
+      BINARY_BODY
     );
     assertHttpEqual(relayResponse, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n", BINARY_BODY);
   });
 });
 
-it.only("can handle multiple sockets in series when reaching max maxConcurrency", async () => {
+it("can handle multiple sockets in series when reaching max maxConcurrency", async () => {
   const httpRequest =
     "GET / HTTP/1.1\r\nHost: couloir.test.local\r\nConnection: keep-alive\r\n\r\nfoo";
   const httpResponse = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar";
@@ -209,6 +209,58 @@ it("can handle multiple sockets in parallel", async () => {
   });
 });
 
+it("can serve websockets", async () => {
+  const httpRequest =
+    "GET / HTTP/1.1\r\n" +
+    "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: in1gAuzHsuThjnQPIIaEhg==\r\n" +
+    "Connection: Upgrade\r\nUpgrade: websocket\r\n" +
+    "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" +
+    "Host: couloir.test.local\r\n\r\n";
+
+  const httpResponse =
+    "HTTP/1.1 101 Switching Protocols\r\n" +
+    "Upgrade: websocket\r\n" +
+    "Connection: Upgrade\r\n" +
+    "Sec-WebSocket-Accept: twHZDbig4x2EiHe/tkxr+cNox4E=\r\n\r\n";
+
+  
+  let localSocket 
+  const serverChunks = []
+  const clientChunks = []
+  const onLocalConnection = (socket) => {
+    localSocket = socket
+    socket.on("data", (data) => {
+      serverChunks.push(data)
+    });
+  };
+
+  await setup({ onLocalConnection }, async () => {
+    const relaySocket = await createRelayConnection()
+    relaySocket.write(httpRequest);
+    relaySocket.on("data", (data) => clientChunks.push(data))
+    await letTheBitsFlow();
+
+    assert.equal(serverChunks.length, 1);
+    localSocket.write(httpResponse);
+    await letTheBitsFlow();
+    
+    assert.equal(clientChunks.length, 1);
+    assert.equal(clientChunks[0].subarray(0, 12).toString(), 'HTTP/1.1 101');
+    relaySocket.write("hello");
+    localSocket.write("world");
+    
+    await letTheBitsFlow();
+
+    localSocket.write("foo");
+
+    await letTheBitsFlow();
+    
+    assert.equal(serverChunks[1].toString(), "hello");
+    assert.equal(clientChunks[1].toString(), "world");
+    assert.equal(clientChunks[2].toString(), "foo");
+  });
+});
+
 it("can take a custom sub-domain", async () => {
   bindConfig.name = "my-domain";
 
@@ -231,11 +283,11 @@ it("can override the host header on multiple requests via the same socket", asyn
     const response2 = await sendRelayRequest(httpRequest, { socket });
     assert.equal(
       localServerReceived[0].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo"
     );
     assert.equal(
       localServerReceived[1].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo"
     );
     assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
     assert.equal(response2.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
@@ -248,13 +300,13 @@ it("closes the couloir when stopping the proxy", async () => {
   await setup({}, async ({ bindServer }) => {
     assert.equal(
       (await sendRelayRequest(httpRequest)).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar",
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar"
     );
 
     await bindServer.stop();
     assert.equal(
       (await sendRelayRequest(httpRequest)).toString(),
-      "HTTP/1.1 404 Not found\r\n\r\nNot found",
+      "HTTP/1.1 404 Not found\r\n\r\nNot found"
     );
   });
 });
@@ -266,8 +318,9 @@ it("should not close the couloir when closing the last client socket", async () 
     const response = await new Promise((resolve, reject) => {
       const socket = net.createConnection({ port: RELAY_PORT }, () => {
         socket.on("data", (data) => {
-          socket.end(); // <--- this is the important change
           resolve(data);
+          socket.end(); // <------ this is the
+          socket.destroy(); // <-- the important change
         });
         socket.write(httpRequest);
       });
@@ -281,7 +334,7 @@ it("should not close the couloir when closing the last client socket", async () 
     // Check that the couloir is still opened
     assert.equal(
       (await sendRelayRequest(httpRequest)).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar",
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar"
     );
   });
 });
@@ -307,7 +360,7 @@ describe("with TLS", () => {
           () => {
             socket.on("data", resolve);
             socket.write(httpRequest);
-          },
+          }
         );
       });
 
