@@ -36,13 +36,22 @@ export function parseResHead(head) {
 
 export function pipeHttpRequest(
   source,
-  target,
-  { initialBuffer, onHead = (h) => h, onEnd = () => target.end() } = {},
+  targetOrOnFirstByteFn,
+  { initialBuffer, onHead = (h) => h, onEnd = ({ target }) => target.end() } = {},
 ) {
-  let headBuffer = initialBuffer || Buffer.from([]);
+  let headBuffer = Buffer.from([]);
   let headDone = false;
+  let target = targetOrOnFirstByteFn;
 
-  source.on("data", (data) => {
+  const onData = async (data) => {
+    if (!data.length) {
+      return;
+    }
+
+    if (typeof target === "function") {
+      target = await target();
+    }
+
     if (!headDone) {
       headBuffer = Buffer.concat([headBuffer, data]);
 
@@ -58,6 +67,13 @@ export function pipeHttpRequest(
     } else {
       target.write(data);
     }
-    source.on("end", onEnd);
-  });
+
+    source.on("end", () => onEnd({ source, target }));
+  };
+
+  if (initialBuffer) {
+    onData(initialBuffer);
+  }
+
+  source.on("data", onData);
 }
