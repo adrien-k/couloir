@@ -71,7 +71,7 @@ export default function relay({
     const relaySocket = {
       id: ++socketCounter,
       socket,
-      ip: socket.address().address,
+      ip: socket.remoteAddress,
       // Null until we identify which couloir host this socket belongs to.
       host: null,
       // In case some data is already read from the client socket before piping to the host
