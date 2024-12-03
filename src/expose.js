@@ -125,7 +125,7 @@ export default function expose({
       sockets.relaySocket,
       JOIN_COULOIR,
       couloirKey,
-      { log },
+      log,
     );
 
     // This is a singular socket so we can init the access log on the request
@@ -175,7 +175,7 @@ export default function expose({
     const socket = await createRelayConnection();
     const {
       response: { host, key },
-    } = await hostToRelayMessage(socket, OPEN_COULOIR, requestedCouloirHost, { log });
+    } = await hostToRelayMessage(socket, OPEN_COULOIR, requestedCouloirHost, log );
 
     // Wait for couloir sockets to be opened before closing the opening one
     // to ensure the couloir is not closed on the relay by reaching 0 activeSockets.

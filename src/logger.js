@@ -23,7 +23,7 @@ export function loggerFactory({ verbose }) {
 }
 
 export function defaultLogger(msg, level = "debug") {
-  const fullMessage = `[${timestamp()}] [${level}] ${msg}`;
+  const fullMessage = `[${timestamp()}] ${level}: ${msg}`;
   if (level === "error" || level === "fatal" || level === "warn") {
     console.error(fullMessage);
   } else {
