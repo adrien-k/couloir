@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { createCertServer } from "./certs.js";
 import { defaultLogger } from "./logger.js";
 import { onHostToRelayMessage, OPEN_COULOIR, JOIN_COULOIR } from "./protocol.js";
+import logo from "./logo.js";
 
 const HOST_MATCH = /\r\nHost: (.+)\r\n/;
 const TYPE_HOST = "host";
@@ -152,48 +153,63 @@ export default function relay({
       }
     }
 
-    onHostToRelayMessage(socket, log, {
-      [OPEN_COULOIR]: onCouloirOpen,
-      [JOIN_COULOIR]: onCouloirJoin,
-    });
+    let firstByte = true;
+    const onData = (data) => {
+      if (firstByte) {
+        firstByte = false;
 
-    let onData;
-    socket.on(
-      "data",
-      (onData = (data) => {
-        if (relaySocket.type === TYPE_HOST) {
+        const couloirMessage = onHostToRelayMessage(data, socket, log);
+        if (couloirMessage) {
+          const { key, payload, sendResponse } = couloirMessage;
+          const handler = { [OPEN_COULOIR]: onCouloirOpen, [JOIN_COULOIR]: onCouloirJoin }[key];
+
+          if (handler) {
+            handler(payload, sendResponse);
+            return socket.off("data", onData);
+          }
+        }
+
+        if (data.indexOf("HTTP/") === -1) {
+          const msg = "Invalid protocol, probably https over http-only relay.";
+          relaySocket.log(msg, "error");
+          socket.write(`HTTP/1.1 400 Bad Request\r\n\r\n${msg}.`);
+          socket.end();
           return socket.off("data", onData);
         }
+      }
 
-        relaySocket.requestBuffer = Buffer.concat([relaySocket.requestBuffer, data]);
-        const headLastByte = relaySocket.requestBuffer.indexOf("\r\n\r\n");
+      relaySocket.requestBuffer = Buffer.concat([relaySocket.requestBuffer, data]);
+      const headLastByte = relaySocket.requestBuffer.indexOf("\r\n\r\n");
 
-        // Wait for the end of head
-        if (headLastByte === -1) {
-          return;
-        }
+      // Wait for the end of head
+      if (headLastByte === -1) {
+        return;
+      }
 
-        // We got the head, no need to look further in socket stream
-        socket.off("data", onData);
+      // We got the head, no need to look further in socket stream
+      socket.off("data", onData);
 
-        const head = relaySocket.requestBuffer.subarray(0, headLastByte + 2).toString();
-        const host_match = head.match(HOST_MATCH);
-        // This removes the potential port that is part of the Host but not of how couloirs
-        // are identified.
-        const host = host_match && host_match[1].replace(/:.*$/, "");
-        if (host && hosts[host]) {
-          relaySocket.host = host;
-          relaySocket.type = TYPE_CLIENT;
-          clients[host].push(relaySocket);
-          relaySocket.log("identified");
+      const head = relaySocket.requestBuffer.subarray(0, headLastByte + 2).toString();
+      const host_match = head.match(HOST_MATCH);
+      // This removes the potential port that is part of the Host but not of how couloirs
+      // are identified.
+      const host = host_match && host_match[1].replace(/:.*$/, "");
+      if (host && hosts[host]) {
+        relaySocket.host = host;
+        relaySocket.type = TYPE_CLIENT;
+        clients[host].push(relaySocket);
+        relaySocket.log("identified");
 
-          bindNextSockets(host);
-        } else {
-          socket.write("HTTP/1.1 404 Not found\r\n\r\nNot found");
-          socket.end();
-        }
-      }),
-    );
+        bindNextSockets(host);
+      } else {
+        socket.write(
+          `HTTP/1.1 404 Not found\r\n\r\n${logo(`404\n\nCouloir "${host}" is not open`)}`,
+        );
+        socket.end();
+      }
+    };
+
+    socket.on("data", onData);
 
     function socketCleanup() {
       delete sockets[relaySocket.id];

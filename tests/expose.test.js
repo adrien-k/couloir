@@ -112,19 +112,16 @@ async function createRelayConnection() {
 async function sendRelayRequest(httpRequest, { socket } = {}) {
   socket = socket || (await createRelayConnection());
   return new Promise((resolve) => {
-    let onData;
-    socket.on(
-      "data",
-      (onData = (data) => {
-        socket.off("data", onData);
-        resolve(data);
-      }),
-    );
+    const onData = (data) => {
+      socket.off("data", onData);
+      resolve(data);
+    };
+    socket.on("data", onData);
     socket.write(httpRequest);
   });
 }
 
-it.only("tunnels http request/response from relay to local server and back", async () => {
+it("tunnels http request/response from relay to local server and back", async () => {
   const httpRequestHead = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\n";
   const httpResponseHead = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n";
   const httpRequest = Buffer.concat([Buffer.from(httpRequestHead), BINARY_BODY]);
@@ -310,10 +307,7 @@ it("closes the couloir when stopping the proxy", async () => {
     );
 
     await bindServer.stop();
-    assert.equal(
-      (await sendRelayRequest(httpRequest)).toString(),
-      "HTTP/1.1 404 Not found\r\n\r\nNot found",
-    );
+    assert.equal((await sendRelayRequest(httpRequest)).subarray(0, 12).toString(), "HTTP/1.1 404");
   });
 });
 

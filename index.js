@@ -29,8 +29,7 @@ yargs(hideBin(process.argv))
   .command(
     "relay <domain>",
     "Start the relay server on port 443 (or --port), and cert validation on port 80.\n\n  \
-    - If you use --http option, it will only run the relay server on port 80 (or --port option).\n  \
-    - If you have generated a valid wildcard cert with the `couloir wildcard` command it does not need to open port 80.",
+     Note that if you use --http option, it will only run the relay server on port 80 (or --port option).\n\n",
     (yargs) => {
       return yargs
         .positional("domain", {
@@ -57,7 +56,7 @@ yargs(hideBin(process.argv))
         });
     },
     async (argv) => {
-      logo(`Relay Server | Version ${packageJson.version}`);
+      console.log(logo(`Relay Server | Version ${packageJson.version}`));
       await relay(argvWithLog(argv)).start();
     },
   )
@@ -72,6 +71,7 @@ yargs(hideBin(process.argv))
         })
         .option("relay-host", {
           alias: "on",
+          type: "string",
           describe: "Hostname of the relay server.",
         })
         .option("name", {
@@ -97,30 +97,8 @@ yargs(hideBin(process.argv))
           default: false,
         }),
     async (argv) => {
-      logo(`Host Server | Version ${packageJson.version}`);
+      console.log(logo(`Host Server | Version ${packageJson.version}`));
       await expose(argvWithLog(argv)).start();
-    },
-  )
-  .command(
-    "wildcard",
-    "Generate Let's Encrypt certificate for the given domain and store it in your home directory ~/.couloir/certs \n \
-    Use this so that you don't need to run the auto-cert validation server on port 80.",
-    (yargs) =>
-      yargs
-        .positional("domain", {
-          describe: "Domain under which to couloir hosts will be created.",
-        })
-        .option("email", {
-          describe: "Email used for Let's Encrypt cert generation",
-          default: "test@example.com",
-        })
-        .option("certs-directory", {
-          describe:
-            "Directory where to read and write Let's encrypt certs. Start with './' for paths relative to current directory.",
-          default: "~/.couloir/certs",
-        }),
-    (argv) => {
-      generateWildcard(argvWithLog(argv));
     },
   )
   .option("verbose", {

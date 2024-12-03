@@ -7,10 +7,21 @@ const __dirname = dirname(__filename);
 
 const asciiLogo = fs.readFileSync(join(__dirname, "logo.txt"), "utf8");
 const newLine = "=========================================================================";
+
+const center = (width) => (text) => {
+  return " ".repeat(Math.floor((width - text.length) / 2)) + text;
+};
+
 export default function logo(subtitle) {
-  console.log("\n" + newLine + "\n");
-  console.log(asciiLogo);
-  const space = Math.floor((newLine.length - subtitle.length) / 2);
-  console.log(" ".repeat(space) + subtitle);
-  console.log("\n" + newLine + "\n");
+  return (
+    "\n" +
+    newLine +
+    "\n" +
+    asciiLogo +
+    "\n" +
+    subtitle.split("\n").map(center(newLine.length)).join("\n") +
+    "\n\n" +
+    newLine +
+    "\n"
+  );
 }
