@@ -115,7 +115,7 @@ export function createCertServer({ domain, certsDirectory, log, email, hosts } =
 
     /* Waiting on certificate order to go through */
     if (pendingDomains[servername]) {
-      if (attempt >= 10) {
+      if (attempt >= 15) {
         throw new Error(`Gave up waiting on certificate for ${servername}`);
       }
 
@@ -169,7 +169,7 @@ export function createCertServer({ domain, certsDirectory, log, email, hosts } =
 
       /* ACME challenge response */
       if (token in challengeResponses) {
-        serverLog(`[${req.ip}] Serving challenge response HTTP 200 token=${token}`);
+        serverLog(`Serving challenge response HTTP 200 token=${token}`);
         res.writeHead(200);
         res.end(challengeResponses[token]);
         return;
