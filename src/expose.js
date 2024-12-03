@@ -132,44 +132,39 @@ export default function expose({
     // and log it on the response without conflicts.
     let accessLog = "";
     let reqStart;
-    let nextRelayOpened = false;
 
-    proxyHttp(
-      sockets.relaySocket,
-      () => net.createConnection({ host: localHost, port: localPort }),
-      {
-        log,
-        initialBuffer,
-        onFirstByte: async () => {
-          await openNextRelaySocket(couloirKey);
-        },
-        onRequestHead: (head) => {
-          reqStart = Date.now();
-          const headParts = parseReqHead(head);
-          const { method, path } = headParts;
-          accessLog = `${method} ${path}`;
-
-          if (overrideHost) {
-            headParts.headers["Host"] = [overrideHost];
-          }
-
-          return serializeReqHead(headParts);
-        },
-        onResponseHead: (head) => {
-          const { status } = parseResHead(head);
-          accessLog += ` -> ${status} (${Date.now() - reqStart} ms)`;
-          log(accessLog, "info");
-          return head;
-        },
-        onClientSocketEnd: () => {
-          log("Relay socket closed. Closing local server socket.");
-        },
-        onServerSocketEnd: async () => {
-          log("Local server socket closing which will in turn close the relay socket.");
-          await beforeClosingRelaySocket();
-        },
+    proxyHttp(sockets.relaySocket, localHost, localPort, {
+      log,
+      initialBuffer,
+      onFirstByte: async () => {
+        await openNextRelaySocket(couloirKey);
       },
-    );
+      onRequestHead: (head) => {
+        reqStart = Date.now();
+        const headParts = parseReqHead(head);
+        const { method, path } = headParts;
+        accessLog = `${method} ${path}`;
+
+        if (overrideHost) {
+          headParts.headers["Host"] = [overrideHost];
+        }
+
+        return serializeReqHead(headParts);
+      },
+      onResponseHead: (head) => {
+        const { status } = parseResHead(head);
+        accessLog += ` -> ${status} (${Date.now() - reqStart} ms)`;
+        log(accessLog, "info");
+        return head;
+      },
+      onClientSocketEnd: () => {
+        log("Relay socket closed. Closing local server socket.");
+      },
+      onServerSocketEnd: async () => {
+        log("Local server socket closing which will in turn close the relay socket.");
+        await beforeClosingRelaySocket();
+      },
+    });
   }
 
   async function openCouloir() {
@@ -184,12 +179,8 @@ export default function expose({
 
     // Wait for couloir sockets to be opened before closing the opening one
     // to ensure the couloir is not closed on the relay by reaching 0 activeSockets.
-    // But we don't await for it as the Host-Relay can already receive connections.
-    // openNextRelaySocket will terminate the process if it fails to connect to either
-    // direction (relay or local).
-    openNextRelaySocket(key).then(() => {
-      socket.end();
-    });
+    await openNextRelaySocket(key);
+    socket.end();
 
     return host;
   }

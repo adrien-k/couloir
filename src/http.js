@@ -1,4 +1,7 @@
+import net from "node:net";
 import { Transform } from "node:stream";
+
+import logo from "./logo.js";
 
 export function parseHttp(head) {
   const headLines = head.replace(/\r\n$/, "").split("\r\n");
@@ -86,7 +89,8 @@ class HttpHeadParserTransform extends Transform {
 
 export function proxyHttp(
   clientSocket,
-  serverSocketFn,
+  localHost,
+  localPort,
   {
     initialBuffer = Buffer.from([]),
     onFirstByte = async () => {},
@@ -102,19 +106,22 @@ export function proxyHttp(
 
   let serverSocket;
 
-  const setupServerSocket = async (tryCount = 1) => {
+  const setupServerSocket = async () => {
     try {
-      serverSocket = serverSocketFn();
       await new Promise((resolve, reject) => {
+        serverSocket = net.createConnection({ host: localHost, port: localPort }, resolve);
         serverSocket.on("error", (err) => {
           reject(err);
         });
-        serverSocket.on("connect", resolve);
       });
     } catch (err) {
       log("Unable to connect to local server.", "error");
       log(err, "error");
-      clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\nUnable to connect to local server.");
+      clientSocket.write(
+        `HTTP/1.1 502 Bad Gateway\r\n\r\n${logo(
+          `502\n\nUnable to connect to your local server on ${localHost}:${localPort}`,
+        )}`,
+      );
       clientSocket.end();
       return false;
     }
