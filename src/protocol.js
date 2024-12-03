@@ -4,7 +4,7 @@ const MESSAGE_SEPARATOR = "\r\n\r\n";
 export const OPEN_COULOIR = "COULOIR OPEN";
 export const JOIN_COULOIR = "COULOIR JOIN";
 
-export async function hostToRelayMessage(socket, key, value, { log } = {}) {
+export async function hostToRelayMessage(socket, key, value, log) {
   log(`Sending Couloir message: ${key} ${value}`);
   const ackKey = `${key} ACK`;
 
@@ -41,7 +41,7 @@ export async function hostToRelayMessage(socket, key, value, { log } = {}) {
       socket.write(`${key} ${value}${MESSAGE_SEPARATOR}`);
     }
 
-    socket.on("end", () => {
+    socket.on("close", () => {
       if (!resolve) {
         // This usually happens when the relay server is closed before the couloir was joined
         // and is usually normal
@@ -52,7 +52,7 @@ export async function hostToRelayMessage(socket, key, value, { log } = {}) {
   });
 }
 
-export function onHostToRelayMessage(data, socket, log, cb) {
+export function onHostToRelayMessage(data, socket, log) {
   if (data.indexOf("COULOIR") !== 0) {
     return false;
   }

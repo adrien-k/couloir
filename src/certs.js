@@ -77,7 +77,7 @@ async function createClient(absoluteCertsDirectory) {
  * Code inspired from https://github.com/publishlab/node-acme-client/blob/master/examples/http-01/http-01.js
  *
  */
-export function createCertServer({ domain, certsDirectory, log, email } = {}) {
+export function createCertServer({ domain, certsDirectory, log, email, hosts } = {}) {
   const absoluteCertsDirectory = certsDirectory
     .replace("~", os.homedir())
     .replace(/^\./, process.cwd());
@@ -92,8 +92,8 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
    */
   let client;
   async function getCertOnDemand(servername, attempt = 0) {
-    if (!(domain === servername || servername.endsWith(`.${domain}`))) {
-      throw new Error("Invalid servername");
+    if (!(domain === servername || `couloir.${domain}`=== servername || hosts[servername])) {
+      throw new Error("Invalid Couloir host");
     }
 
     const certificateStore = await certsPromise;
@@ -146,7 +146,7 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
     });
 
     /* Done, store certificate */
-    log(`Certificate for ${servername} created successfully`);
+    log(`Certificate for ${servername} created successfully`, "info");
     certificateStore[servername] = [key, cert];
     await saveCertificate(absoluteCertsDirectory, servername, key, cert);
     delete pendingDomains[servername];
@@ -183,6 +183,21 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
     res.end();
   });
 
+  const sniCallback = async (servername, cb) => {
+    try {
+      const [key, cert] = await getCertOnDemand(servername);
+      cb(null, tls.createSecureContext({ key, cert }));
+    } catch (e) {
+      log(`Failed to get certificate for ${servername}: ${e.message}`, "error");
+      if (servername !== domain) {
+        // Fallback on Relay domain cert
+        return sniCallback(domain, cb)
+      } else {
+        cb(e);
+      }
+    }
+  }
+
   return {
     start: async () => {
       const certificateStore = await certsPromise;
@@ -202,15 +217,7 @@ export function createCertServer({ domain, certsDirectory, log, email } = {}) {
     stop: async () => {
       return new Promise((r) => httpServer.close(r));
     },
-    SNICallback: async (servername, cb) => {
-      try {
-        const [key, cert] = await getCertOnDemand(servername);
-        cb(null, tls.createSecureContext({ key, cert }));
-      } catch (e) {
-        log(`Failed to get certificate for ${servername}: ${e.message}`);
-        cb(e);
-      }
-    },
+    SNICallback: sniCallback,
     getCertOnDemand,
   };
 }

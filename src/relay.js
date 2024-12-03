@@ -12,6 +12,7 @@ const TYPE_HOST = "host";
 const TYPE_CLIENT = "client";
 
 export default function relay({
+  verbose,
   relayPort,
   domain,
   http = false,
@@ -35,6 +36,7 @@ export default function relay({
         log,
         email,
         domain,
+        hosts
       });
       return {
         relay: tls.createServer({ SNICallback: certService.SNICallback }, onSocket),
@@ -69,6 +71,7 @@ export default function relay({
     const relaySocket = {
       id: ++socketCounter,
       socket,
+      ip: socket.address().address,
       // Null until we identify which couloir host this socket belongs to.
       host: null,
       // In case some data is already read from the client socket before piping to the host
@@ -79,10 +82,12 @@ export default function relay({
       // True as soon as the socket is used for relaying
       bound: false,
       log: (message, level) => {
-        let prefix = `[#${relaySocket.id}]`;
-        prefix += relaySocket.type ? `[${relaySocket.type}]` : "";
-        prefix += relaySocket.host ? `[${relaySocket.host}]` : "";
-        log(`${prefix} ${message}`, level);
+        let prefix = ""
+        prefix +=  verbose ? `[${relaySocket.ip}] ` : ''
+        prefix += `[#${relaySocket.id}] `;
+        prefix += relaySocket.type ? `[${relaySocket.type}] ` : "";
+        prefix += relaySocket.host ? `[${relaySocket.host}] ` : "";
+        log(`${prefix}${message}`, level);
       },
     };
 
@@ -123,15 +128,16 @@ export default function relay({
       const key = crypto.randomBytes(24).toString("hex");
       relaySocket.log(`Couloir opened`, "info");
 
+
+      keyToHost[key] = host;
+      hosts[host] = [];
+      clients[host] = [];
+
       if (certService) {
         // Already start the let's encrypt cert generation.
         // We don't await it on purpose
         certService.getCertOnDemand(host);
       }
-
-      keyToHost[key] = host;
-      hosts[host] = [];
-      clients[host] = [];
 
       sendResponse({ key, host });
     }
@@ -158,7 +164,7 @@ export default function relay({
       if (firstByte) {
         firstByte = false;
 
-        const couloirMessage = onHostToRelayMessage(data, socket, log);
+        const couloirMessage = onHostToRelayMessage(data, socket, relaySocket.log);
         if (couloirMessage) {
           const { key, payload, sendResponse } = couloirMessage;
           const handler = { [OPEN_COULOIR]: onCouloirOpen, [JOIN_COULOIR]: onCouloirJoin }[key];
@@ -222,7 +228,7 @@ export default function relay({
       }
     }
 
-    socket.on("end", () => {
+    socket.on("close", () => {
       relaySocket.log("disconnected");
       socketCleanup();
     });
