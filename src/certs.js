@@ -78,6 +78,9 @@ async function createClient(absoluteCertsDirectory) {
  *
  */
 export function createCertServer({ domain, certsDirectory, log, email, hosts } = {}) {
+  const originalLog = log
+  log = (msg, level) => originalLog(`[Cert] ${msg}`, level)
+
   const absoluteCertsDirectory = certsDirectory
     .replace("~", os.homedir())
     .replace(/^\./, process.cwd());
@@ -158,27 +161,29 @@ export function createCertServer({ domain, certsDirectory, log, email, hosts } =
    */
 
   const httpServer = http.createServer((req, res) => {
+    const serverLog = (msg, level) => log(`[${req.socket.remoteAddress}] ${msg}`, level)
+
     if (req.url.match(/\/\.well-known\/acme-challenge\/.+/)) {
       const token = req.url.split("/").pop();
-      log(`Received challenge request for token=${token}`);
+      serverLog(`Received challenge request for token=${token}`, "info");
 
       /* ACME challenge response */
       if (token in challengeResponses) {
-        log(`Serving challenge response HTTP 200 token=${token}`);
+        serverLog(`[${req.ip}] Serving challenge response HTTP 200 token=${token}`);
         res.writeHead(200);
         res.end(challengeResponses[token]);
         return;
       }
 
       /* Challenge response not found */
-      log(`Oops, challenge response not found for token=${token}`);
+      serverLog(`Oops, challenge response not found for token=${token}`);
       res.writeHead(404);
       res.end();
       return;
     }
 
     /* HTTP 302 redirect */
-    log(`HTTP 302 ${req.headers.host}${req.url}`);
+    serverLog(`HTTP 302 ${req.headers.host}${req.url}`, "info");
     res.writeHead(302, { Location: `https://${req.headers.host}${req.url}` });
     res.end();
   });
@@ -209,7 +214,7 @@ export function createCertServer({ domain, certsDirectory, log, email, hosts } =
       return new Promise((resolve, reject) => {
         httpServer.on("error", reject);
         httpServer.listen(HTTP_SERVER_PORT, () => {
-          log(`Cert validation server listening on port ${HTTP_SERVER_PORT}`, "info");
+          log(`Validation server listening on port ${HTTP_SERVER_PORT}`, "info");
           resolve();
         });
       });
