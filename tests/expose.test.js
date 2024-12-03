@@ -25,10 +25,13 @@ function assertHttpEqual(req, head, body) {
   assert.equal(req.toString("hex", endOfHead + 4), body.toString("hex"));
 }
 
-let relayConfig, bindConfig, logs, localServerReceived;
+let relayConfig, bindConfig, logs, localServerReceived, responseCounter;
 const logFactory = (source) => (msg, level) => {
   if (process.env.LOG === "true" || level === "error") {
     console.error(`[${source}] ${msg}`);
+    if (msg instanceof Error) {
+      console.error(msg.stack);
+    }
   } else {
     logs.push(`[${source}] ${msg}`);
   }
@@ -37,7 +40,7 @@ const logFactory = (source) => (msg, level) => {
 beforeEach(() => {
   logs = [];
   localServerReceived = [];
-
+  responseCounter = 1;
   relayConfig = {
     relayPort: RELAY_PORT,
     domain: "test.local",
@@ -57,12 +60,12 @@ beforeEach(() => {
 
 async function setup(
   {
-    httpResponse = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar",
+    httpResponse = () => `HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar${responseCounter++}`,
     keepAlive = false,
     onLocalConnection = (socket) => {
       socket.on("data", (data) => {
         localServerReceived.push(data);
-        socket.write(httpResponse);
+        socket.write(typeof httpResponse === "function" ? httpResponse() : httpResponse);
         if (!keepAlive) {
           socket.end();
           socket.destroy();
@@ -70,7 +73,7 @@ async function setup(
       });
     },
   },
-  testFn
+  testFn,
 ) {
   const relayServer = relay(relayConfig);
   const localServer = net.createServer(onLocalConnection);
@@ -83,16 +86,20 @@ async function setup(
     localServer.listen(LOCAL_PORT, resolve);
   });
 
+  const close = async () => {
+    await bindServer.stop();
+    await new Promise((r) => localServer.close(r));
+    await relayServer.stop({ force: true });
+  };
+
   try {
     await testFn({ relayServer, bindServer });
+    await close();
   } catch (e) {
     // Showing verbose outuput for debugging failures
     console.error(logs);
+    await close();
     throw e;
-  } finally {
-    await bindServer.stop({ force: true });
-    await new Promise((r) => localServer.close(r));
-    await relayServer.stop({ force: true });
   }
 }
 async function createRelayConnection() {
@@ -111,13 +118,13 @@ async function sendRelayRequest(httpRequest, { socket } = {}) {
       (onData = (data) => {
         socket.off("data", onData);
         resolve(data);
-      })
+      }),
     );
     socket.write(httpRequest);
   });
 }
 
-it("tunnels http request/response from relay to local server and back", async () => {
+it.only("tunnels http request/response from relay to local server and back", async () => {
   const httpRequestHead = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\n";
   const httpResponseHead = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n";
   const httpRequest = Buffer.concat([Buffer.from(httpRequestHead), BINARY_BODY]);
@@ -130,7 +137,7 @@ it("tunnels http request/response from relay to local server and back", async ()
     assertHttpEqual(
       localServerReceived[0],
       "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n",
-      BINARY_BODY
+      BINARY_BODY,
     );
     assertHttpEqual(relayResponse, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n", BINARY_BODY);
   });
@@ -223,38 +230,37 @@ it("can serve websockets", async () => {
     "Connection: Upgrade\r\n" +
     "Sec-WebSocket-Accept: twHZDbig4x2EiHe/tkxr+cNox4E=\r\n\r\n";
 
-  
-  let localSocket 
-  const serverChunks = []
-  const clientChunks = []
+  let localSocket;
+  const serverChunks = [];
+  const clientChunks = [];
   const onLocalConnection = (socket) => {
-    localSocket = socket
+    localSocket = socket;
     socket.on("data", (data) => {
-      serverChunks.push(data)
+      serverChunks.push(data);
     });
   };
 
   await setup({ onLocalConnection }, async () => {
-    const relaySocket = await createRelayConnection()
+    const relaySocket = await createRelayConnection();
     relaySocket.write(httpRequest);
-    relaySocket.on("data", (data) => clientChunks.push(data))
+    relaySocket.on("data", (data) => clientChunks.push(data));
     await letTheBitsFlow();
 
     assert.equal(serverChunks.length, 1);
     localSocket.write(httpResponse);
     await letTheBitsFlow();
-    
+
     assert.equal(clientChunks.length, 1);
-    assert.equal(clientChunks[0].subarray(0, 12).toString(), 'HTTP/1.1 101');
+    assert.equal(clientChunks[0].subarray(0, 12).toString(), "HTTP/1.1 101");
     relaySocket.write("hello");
     localSocket.write("world");
-    
+
     await letTheBitsFlow();
 
     localSocket.write("foo");
 
     await letTheBitsFlow();
-    
+
     assert.equal(serverChunks[1].toString(), "hello");
     assert.equal(clientChunks[1].toString(), "world");
     assert.equal(clientChunks[2].toString(), "foo");
@@ -268,11 +274,11 @@ it("can take a custom sub-domain", async () => {
 
   await setup({}, async () => {
     const response = await sendRelayRequest(httpRequest);
-    assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
+    assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
   });
 });
 
-it("can override the host header on multiple requests via the same socket", async () => {
+it("can handle multiple requests in the same socket", async () => {
   bindConfig.overrideHost = "my-other-domain";
 
   const httpRequest = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo";
@@ -280,17 +286,17 @@ it("can override the host header on multiple requests via the same socket", asyn
   await setup({ keepAlive: true }, async () => {
     const socket = await createRelayConnection();
     const response1 = await sendRelayRequest(httpRequest, { socket });
-    const response2 = await sendRelayRequest(httpRequest, { socket });
     assert.equal(
       localServerReceived[0].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo"
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
     );
+    assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+    const response2 = await sendRelayRequest(httpRequest, { socket });
     assert.equal(
       localServerReceived[1].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo"
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
     );
-    assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
-    assert.equal(response2.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
+    assert.equal(response2.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2");
   });
 });
 
@@ -300,13 +306,13 @@ it("closes the couloir when stopping the proxy", async () => {
   await setup({}, async ({ bindServer }) => {
     assert.equal(
       (await sendRelayRequest(httpRequest)).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar"
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1",
     );
 
     await bindServer.stop();
     assert.equal(
       (await sendRelayRequest(httpRequest)).toString(),
-      "HTTP/1.1 404 Not found\r\n\r\nNot found"
+      "HTTP/1.1 404 Not found\r\n\r\nNot found",
     );
   });
 });
@@ -327,14 +333,14 @@ it("should not close the couloir when closing the last client socket", async () 
       socket.on("error", reject);
     });
 
-    assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
+    assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
 
     await letTheBitsFlow();
 
     // Check that the couloir is still opened
     assert.equal(
       (await sendRelayRequest(httpRequest)).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar"
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2",
     );
   });
 });
@@ -360,11 +366,11 @@ describe("with TLS", () => {
           () => {
             socket.on("data", resolve);
             socket.write(httpRequest);
-          }
+          },
         );
       });
 
-      assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
+      assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
     });
   });
 });

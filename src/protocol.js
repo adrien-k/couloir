@@ -40,7 +40,9 @@ export async function hostToRelayMessage(socket, key, value, { log, keepSocketOp
 
     // Adding the trailing CRLF has a side-benefit of making other http servers respond
     // with 400 rapidly if targetting a Host that is not a relay.
-    socket.write(`${key} ${value}${MESSAGE_SEPARATOR}`);
+    if (socket.writable) {
+      socket.write(`${key} ${value}${MESSAGE_SEPARATOR}`);
+    }
 
     socket.on("end", () => {
       if (!resolve) {
@@ -71,7 +73,10 @@ export function onHostToRelayMessage(socket, log, handlers) {
           const ack_key = `${type}_ACK`;
 
           log(`Sending Couloir message ${ack_key} ${jsonResponse}`);
-          socket.write(`${ack_key} ${jsonResponse}${MESSAGE_SEPARATOR}`);
+          if (socket.writable) {
+            // not writable when closing relay for example.
+            socket.write(`${ack_key} ${jsonResponse}${MESSAGE_SEPARATOR}`);
+          }
         };
 
         handlers[type](payload, sendResponse);

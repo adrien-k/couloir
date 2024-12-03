@@ -63,7 +63,7 @@ class HttpHeadParserTransform extends Transform {
       this.push(chunk);
       return callback();
     }
-    
+
     this.headBuffer = Buffer.concat([this.headBuffer, chunk]);
 
     const bodySeparator = this.headBuffer.indexOf("\r\n\r\n");
@@ -89,6 +89,7 @@ export function proxyHttp(
   serverSocketFn,
   {
     initialBuffer = Buffer.from([]),
+    onFirstByte = async () => {},
     onRequestHead,
     onClientSocketEnd,
     onResponseHead,
@@ -101,18 +102,28 @@ export function proxyHttp(
 
   let serverSocket;
 
-  const setupServerSocket = async () => {
-    serverSocket = serverSocketFn();
-    await new Promise((resolve) => serverSocket.on("connect", resolve));
-
-    serverSocket.on("error", (err) => {
-      log(`Failed to connect to local server: ${err.message}`, "error");
-      process.exit(1);
-    });
+  const setupServerSocket = async (tryCount = 1) => {
+    try {
+      serverSocket = serverSocketFn();
+      await new Promise((resolve, reject) => {
+        serverSocket.on("error", (err) => {
+          reject(err);
+        });
+        serverSocket.on("connect", resolve);
+      });
+    } catch (err) {
+      log("Unable to connect to local server.", "error");
+      log(err, "error");
+      clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\nUnable to connect to local server.");
+      clientSocket.end();
+      return false;
+    }
 
     serverSocket.on("data", (data) => {
       requestHeadParser.reset();
-      responseHeadParser.write(data);
+      if (responseHeadParser.writable) {
+        responseHeadParser.write(data);
+      }
     });
 
     serverSocket.on("end", async () => {
@@ -121,15 +132,24 @@ export function proxyHttp(
     });
 
     requestHeadParser.pipe(serverSocket);
+
+    return true;
   };
 
   const onClientData = async (data) => {
+    await onFirstByte();
+
     if (!serverSocket) {
-      await setupServerSocket();
+      const success = await setupServerSocket();
+      if (!success) {
+        return;
+      }
     }
 
     responseHeadParser.reset();
-    requestHeadParser.write(data);
+    if (requestHeadParser.writable) {
+      requestHeadParser.write(data);
+    }
   };
 
   if (initialBuffer?.length) {
