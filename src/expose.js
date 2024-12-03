@@ -15,7 +15,7 @@ const MAX_CONNECTION_TRIES = 10;
 
 export default function expose({
   name,
-  localHost = "127.0.0.1",
+  localHost = "localhost",
   localPort,
   relayHost,
   relayIp,
@@ -46,10 +46,15 @@ export default function expose({
   let relaySocketPromise;
 
   async function openNextRelaySocket(couloirKey, try_count = 1) {
-    const activeSocketCount = Object.keys(activeSockets).length;
     if (closed) {
       return;
     }
+    if (relaySocketPromise) {
+      // Unlikely but in case there is already a socket being opened
+      // that is not yet counted in activeSockets.
+      await relaySocketPromise;
+    }
+    const activeSocketCount = Object.keys(activeSockets).length;
 
     if (activeSocketCount >= maxConcurrency) {
       log(`Too many sockets. Skipping opening new socket.`);
@@ -65,10 +70,14 @@ export default function expose({
           id,
           relaySocket,
           localSocket: null,
-          end: async ({ force = false } = {}) => {
-            await new Promise((r) => sockets.relaySocket.end(r));
-            if (force && sockets.localSocket) {
-              await new Promise((r) => sockets.localSocket.end(r));
+          end: async () => {
+            await new Promise((r) => {
+              sockets.relaySocket.end(r);
+            });
+            if (sockets.localSocket) {
+              await new Promise((r) => {
+                sockets.localSocket.end(r);
+              });
             }
           },
         };
@@ -123,18 +132,17 @@ export default function expose({
     // and log it on the response without conflicts.
     let accessLog = "";
     let reqStart;
+    let nextRelayOpened = false;
 
     proxyHttp(
       sockets.relaySocket,
-      () => {
-        // As soon as the relay socket is bound to a local server socket We need to create a new one for
-        // the next relay connection.
-        openNextRelaySocket(couloirKey);
-
-        return net.createConnection({ host: localHost, port: localPort });
-      },
+      () => net.createConnection({ host: localHost, port: localPort }),
       {
+        log,
         initialBuffer,
+        onFirstByte: async () => {
+          await openNextRelaySocket(couloirKey);
+        },
         onRequestHead: (head) => {
           reqStart = Date.now();
           const headParts = parseReqHead(head);
@@ -186,23 +194,30 @@ export default function expose({
     return host;
   }
 
-  return {
-    start: async () => {
-      const host = await openCouloir();
-      const relayUrl = new URL(`http://${host}:${relayPort}`);
-      relayUrl.protocol = http ? "http" : "https";
-      const hostUrl = new URL(`http://${localHost}:${localPort}`);
-      log(`Couloir opened: ${relayUrl} => ${hostUrl}`, "info");
-    },
+  const stop = async () => {
+    closed = true;
 
-    stop: async ({ force = false } = {}) => {
-      closed = true;
-
-      await relaySocketPromise;
-      for (const id of Object.keys(activeSockets)) {
-        log(`Closing socket ${id}`);
-        await activeSockets[id].end({ force });
-      }
-    },
+    await relaySocketPromise;
+    for (const id of Object.keys(activeSockets)) {
+      log(`Closing socket ${id}`);
+      await activeSockets[id].end();
+    }
   };
+
+  const start = async () => {
+    const host = await openCouloir();
+    const relayUrl = new URL(`http://${host}:${relayPort}`);
+    relayUrl.protocol = http ? "http" : "https";
+    const hostUrl = new URL(`http://${localHost}:${localPort}`);
+    log(`Couloir opened: ${relayUrl} => ${hostUrl}`, "info");
+
+    process.on("SIGINT", async () => {
+      log("Received SIGINT. Stopping...");
+      // We need to stop the open websocket, otherwise the couloir will remain open until they timeout
+      await stop({ force: true });
+      process.exit(0);
+    });
+  };
+
+  return { start, stop };
 }

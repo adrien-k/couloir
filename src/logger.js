@@ -10,7 +10,15 @@ export function loggerFactory({ verbose }) {
     if (level === "debug" && !verbose) {
       return;
     }
-    defaultLogger(msg, level);
+    if (msg instanceof AggregateError) {
+      for (const error of msg.errors) {
+        log(error, level);
+      }
+    } else if (msg instanceof Error && verbose) {
+      defaultLogger(msg.stack, "error");
+    } else {
+      defaultLogger(msg, level);
+    }
   };
 }
 

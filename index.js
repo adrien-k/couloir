@@ -85,9 +85,8 @@ yargs(hideBin(process.argv))
           describe: "Connect to the relay using an IP address instead of the given hostname.",
         })
         .option("local-host", {
-          describe: "Local host to proxy to if not 127.0.0.1.",
-          type: "integer",
-          default: "127.0.0.1",
+          describe: "Local host to proxy to if not localhost.",
+          default: "localhost",
         })
         .options("override-host", {
           describe: "Override the host header in the request.",

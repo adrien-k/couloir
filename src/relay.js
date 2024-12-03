@@ -48,7 +48,7 @@ export default function relay({
     const pendingHosts = hosts[host].filter(({ bound }) => !bound);
 
     log(`Binding sockets clients:${clients[host].length}, hosts: ${pendingHosts.length}`);
-    while (clients[host].length && pendingHosts.length) {
+    if (clients[host].length && pendingHosts.length) {
       const clientSocket = clients[host].shift();
       // We keep the host in place while it is bound to avoid closing a couloir that may look empty.
       const hostSocket = pendingHosts[0];
@@ -195,8 +195,7 @@ export default function relay({
       }),
     );
 
-    socket.on("end", () => {
-      relaySocket.log("disconnected");
+    function socketCleanup() {
       delete sockets[relaySocket.id];
 
       const host = relaySocket.host;
@@ -205,10 +204,17 @@ export default function relay({
         hosts[host] = hosts[host].filter(({ id }) => id !== relaySocket.id);
         closeCouloirIfEmpty(host);
       }
+    }
+
+    socket.on("end", () => {
+      relaySocket.log("disconnected");
+      socketCleanup();
     });
 
     socket.on("error", (err) => {
+      relaySocket.log("Error on relay socket", "error");
       relaySocket.log(err, "error");
+      socketCleanup();
     });
   });
 

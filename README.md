@@ -10,12 +10,12 @@
 
 Temporarily expose a http local service to the Internet using your own server.
 
-- **Encrypted**: traffic in and out of the relay is encrypted with auto-generated Let's Encrypt TLS certificates.
-- **Self-contained**: does not require any anything else (SSH, Nginx, Caddy, ...).
+- **Encrypted**: traffic in and out of the relay is encrypted with auto-generated TLS certificates.
+- **Self-contained**: does not require anything else to work (SSH, Nginx, Caddy, ...).
 - **No configuration**: works out-of-the-box. Can be adjusted through a few CLI options.
-- **Compatible with Websockets**
+- Compatible with Websockets.
 
-_This is still an alpha version so please do not use it for anything too serious. There are plenty of more reliable projects to do this_
+_This is still an alpha version so do not use it for anything too serious._
 
 ## Installation
 
@@ -30,7 +30,7 @@ npm install -g couloir
 ### On your **relay** machine (ex: a cheap VPS)
 
 1. Ensure **port 80**, for cert validation, and **port 443**, for relay traffic, are open and accessible from Internet.
-2. Configure your (sub)domain to point to your relay machine IP. For example:
+2. Configure your (sub)domain to point to your relay machine's IP. For example:
 
 ```
 # VPS IP being 1.2.3.4:
@@ -39,7 +39,7 @@ sub.domain.com A 1.2.3.4
 *.sub.domain.com A 1.2.3.4
 ```
 
-3. Run the couloir relay:
+3. Run the Couloir relay:
 
 ```sh
 couloir relay sub.domain.com
@@ -48,7 +48,7 @@ couloir relay sub.domain.com
 ### On your **local** machine
 
 1. Start your local http server, for example on port 3000.
-2. Run the local couloir proxy:
+2. Run the local Couloir proxy:
 
 ```sh
 couloir expose 3000 --on sub.domain.com
@@ -56,7 +56,7 @@ couloir expose 3000 --on sub.domain.com
 
 ## Recipes
 
-### Custom couloir subdomain
+### Custom Couloir subdomain
 
 You may want to choose your own subdomain name instead of "couloir".
 This will expose `my-service.sub.domain.com`:
