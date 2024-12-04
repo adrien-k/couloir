@@ -39,10 +39,10 @@ sub.domain.com A 1.2.3.4
 *.sub.domain.com A 1.2.3.4
 ```
 
-3. Run the Couloir relay:
+3. Run the Couloir relay. The email option is required to request Let's Encrypt certificates.
 
 ```sh
-couloir relay sub.domain.com
+couloir relay sub.domain.com --email your@email.com
 ```
 
 ### On your **local** machine
@@ -53,6 +53,8 @@ couloir relay sub.domain.com
 ```sh
 couloir expose 3000 --on sub.domain.com
 ```
+
+3. Open `https://couloir.sub.domain.com`
 
 ## Recipes
 
