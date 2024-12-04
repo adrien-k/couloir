@@ -5,9 +5,10 @@ import crypto from "node:crypto";
 import { createCertServer } from "./certs.js";
 import { defaultLogger } from "./logger.js";
 import { onHostToRelayMessage, OPEN_COULOIR, JOIN_COULOIR } from "./protocol.js";
+import { htmlResponse, parseReqHead } from "./http.js";
+
 import logo from "./logo.js";
 
-const HOST_MATCH = /\r\nHost: (.+)\r\n/;
 const TYPE_HOST = "host";
 const TYPE_CLIENT = "client";
 
@@ -21,6 +22,13 @@ export default function relay({
   log = defaultLogger,
 }) {
   let couloirCounter = 0;
+  let exposeCmd = `couloir expose <local-port> --on ${domain}`;
+  if (http) {
+    exposeCmd += " --http";
+  }
+  if (http ? relayPort !== 80 : relayPort !== 443) {
+    exposeCmd += ` --relay-port ${relayPort}`;
+  }
 
   const hosts = {};
   const clients = {};
@@ -36,7 +44,7 @@ export default function relay({
         log,
         email,
         domain,
-        hosts
+        hosts,
       });
       return {
         relay: tls.createServer({ SNICallback: certService.SNICallback }, onSocket),
@@ -82,8 +90,8 @@ export default function relay({
       // True as soon as the socket is used for relaying
       bound: false,
       log: (message, level) => {
-        let prefix = ""
-        prefix +=  verbose ? `[${relaySocket.ip}] ` : ''
+        let prefix = "";
+        prefix += verbose ? `[${relaySocket.ip}] ` : "";
         prefix += `[#${relaySocket.id}] `;
         prefix += relaySocket.type ? `[${relaySocket.type}] ` : "";
         prefix += relaySocket.host ? `[${relaySocket.host}] ` : "";
@@ -127,7 +135,6 @@ export default function relay({
 
       const key = crypto.randomBytes(24).toString("hex");
       relaySocket.log(`Couloir opened`, "info");
-
 
       keyToHost[key] = host;
       hosts[host] = [];
@@ -196,10 +203,32 @@ export default function relay({
       socket.off("data", onData);
 
       const head = relaySocket.requestBuffer.subarray(0, headLastByte + 2).toString();
-      const host_match = head.match(HOST_MATCH);
+      const { headers } = parseReqHead(head);
+
       // This removes the potential port that is part of the Host but not of how couloirs
       // are identified.
-      const host = host_match && host_match[1].replace(/:.*$/, "");
+      const host = headers["Host"]?.[0]?.replace(/:.*$/, "");
+      if (host && host === domain) {
+        let openedCouloirs = "";
+        if (Object.keys(hosts).length) {
+          openedCouloirs = "\n  Open couloirs:\n";
+          for (const host of Object.keys(hosts)) {
+            const hostUrl = new URL(`https://${host}:${relayPort}`);
+            if (http) {
+              hostUrl.protocol = "http";
+            }
+            openedCouloirs += `  - ${hostUrl}\n`;
+          }
+        }
+        socket.write(
+          htmlResponse(
+            headers,
+            logo(`\n\n  To open a new couloir, run:\n  > ${exposeCmd}`) + openedCouloirs
+          )
+        );
+        socket.end();
+        return;
+      }
       if (host && hosts[host]) {
         relaySocket.host = host;
         relaySocket.type = TYPE_CLIENT;
@@ -209,7 +238,9 @@ export default function relay({
         bindNextSockets(host);
       } else {
         socket.write(
-          `HTTP/1.1 404 Not found\r\n\r\n${logo(`404\n\nCouloir "${host}" is not open`)}`,
+          htmlResponse(headers, logo(`404 - Couloir "${host}" is not open`, { center: true }), {
+            status: "404 Not found",
+          })
         );
         socket.end();
       }
@@ -254,7 +285,8 @@ export default function relay({
       await new Promise((resolve, reject) => {
         relay.on("error", reject);
         relay.listen(relayPort, () => {
-          log(`Relay server started on port ${relayPort}`, "info");
+          log(`>>> Relay server started on port ${relayPort}`, "info");
+          log(`>>> Run '${exposeCmd}' to open a new couloir`, "info");
           resolve();
         });
       });

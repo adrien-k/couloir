@@ -78,8 +78,8 @@ async function createClient(absoluteCertsDirectory) {
  *
  */
 export function createCertServer({ domain, certsDirectory, log, email, hosts } = {}) {
-  const originalLog = log
-  log = (msg, level) => originalLog(`[Cert] ${msg}`, level)
+  const originalLog = log;
+  log = (msg, level) => originalLog(`[Cert] ${msg}`, level);
 
   const absoluteCertsDirectory = certsDirectory
     .replace("~", os.homedir())
@@ -95,12 +95,20 @@ export function createCertServer({ domain, certsDirectory, log, email, hosts } =
    */
   let client;
   async function getCertOnDemand(servername, attempt = 0) {
-    if (!(domain === servername || `couloir.${domain}`=== servername || hosts[servername])) {
-      throw new Error("Invalid Couloir host");
-    }
-
     const certificateStore = await certsPromise;
     const wildcardServername = servername.replace(/^[^.]+\./, "*.");
+
+    if (
+      !(
+        domain === servername ||
+        `couloir.${domain}` === servername ||
+        hosts[servername] ||
+        certificateStore[servername] ||
+        certificateStore[wildcardServername]
+      )
+    ) {
+      throw new Error("Invalid Couloir host");
+    }
 
     /* Certificate exists */
     for (const name of [servername, wildcardServername]) {
@@ -161,7 +169,7 @@ export function createCertServer({ domain, certsDirectory, log, email, hosts } =
    */
 
   const httpServer = http.createServer((req, res) => {
-    const serverLog = (msg, level) => log(`[${req.socket.remoteAddress}] ${msg}`, level)
+    const serverLog = (msg, level) => log(`[${req.socket.remoteAddress}] ${msg}`, level);
 
     if (req.url.match(/\/\.well-known\/acme-challenge\/.+/)) {
       const token = req.url.split("/").pop();
@@ -196,12 +204,12 @@ export function createCertServer({ domain, certsDirectory, log, email, hosts } =
       log(`Failed to get certificate for ${servername}: ${e.message}`, "error");
       if (servername !== domain) {
         // Fallback on Relay domain cert
-        return sniCallback(domain, cb)
+        return sniCallback(domain, cb);
       } else {
         cb(e);
       }
     }
-  }
+  };
 
   return {
     start: async () => {

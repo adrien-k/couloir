@@ -94,17 +94,17 @@ export function proxyHttp(
   {
     initialBuffer = Buffer.from([]),
     onFirstByte = async () => {},
-    onRequestHead,
+    onRequestHead = (head) => head,
     onClientSocketEnd,
-    onResponseHead,
+    onResponseHead = (head) => head,
     onServerSocketEnd,
     log,
-  },
+  }
 ) {
+  let serverSocket;
   const requestHeadParser = new HttpHeadParserTransform(onRequestHead);
   const responseHeadParser = new HttpHeadParserTransform(onResponseHead);
 
-  let serverSocket;
 
   const setupServerSocket = async () => {
     try {
@@ -118,9 +118,7 @@ export function proxyHttp(
       log("Unable to connect to local server.", "error");
       log(err, "error");
       clientSocket.write(
-        `HTTP/1.1 502 Bad Gateway\r\n\r\n${logo(
-          `502\n\nUnable to connect to your local server on ${localHost}:${localPort}`,
-        )}`,
+        `HTTP/1.1 502 Bad Gateway\r\n\r\n502 - Unable to connect to your local server on ${localHost}:${localPort}`
       );
       clientSocket.end();
       return false;
@@ -169,4 +167,29 @@ export function proxyHttp(
     await onClientSocketEnd();
     requestHeadParser.end();
   });
+}
+
+// Unsafe, only use with trusted input.
+export function htmlResponse(reqHeaders, text, { status = "200 OK" } = {}) {
+  if (reqHeaders.Accept?.[0]?.includes("text/html")) {
+    const regex = /(https?:\/\/[^\s]+)/g;
+    const style = `
+    body { font-family: monospace; font-size: 1em; }
+    @media (max-width: 750px) { body { font-size: 0.8em; }
+    @media (max-width: 520px) { body { font-size: 0.5em; }
+    `;
+    const html =
+      `<html><head><meta content="width=device-width, initial-scale=1" name="viewport" /><style>${style}</style></head><body>` +
+      text
+        .replace(/ /g, "&nbsp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br>")
+        .replace(regex, '<a href="$1">$1</a>') +
+      "</body></html>";
+
+    return `HTTP/1.1 ${status}\r\nContent-Type: text/html\r\nContent-Length: ${html.length}\r\n\r\n${html}`;
+  } else {
+    return `HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nContent-Length: ${text.length}\r\n\r\n${text}`;
+  }
 }

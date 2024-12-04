@@ -10,15 +10,11 @@ export function loggerFactory({ verbose }) {
     if (level === "debug" && !verbose) {
       return;
     }
-    if (msg instanceof AggregateError) {
-      for (const error of msg.errors) {
-        log(error, level);
-      }
-    } else if (msg instanceof Error && verbose) {
-      defaultLogger(msg.stack, "error");
-    } else {
-      defaultLogger(msg, level);
+
+    if (msg instanceof Error) {
+      msg = errorMessage(msg, { verbose });
     }
+    defaultLogger(msg, level);
   };
 }
 
@@ -29,4 +25,13 @@ export function defaultLogger(msg, level = "debug") {
   } else {
     console.log(fullMessage);
   }
+}
+
+export function errorMessage(err, { verbose = false } = {}) {
+  if (err instanceof AggregateError) {
+    // Usually because the connection was established on IP6 then IP4
+    // We only show the second error
+    return errorMessage(err.errors[1], { verbose });
+  }
+  return verbose ? err.stack : err.message;
 }
