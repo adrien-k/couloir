@@ -89,7 +89,6 @@ export default function expose({
       const sockets = await relaySocketPromise;
 
       const beforeClosingRelaySocket = async () => {
-        delete activeSockets[id];
         if (throttled) {
           log("Throttle mode. Opening next relay socket before relay socket close.");
           // When we reached the max number of sockets (throttled), we need to open a socket
@@ -159,9 +158,14 @@ export default function expose({
       },
       onClientSocketEnd: () => {
         log("Relay socket closed. Closing local server socket.");
+        delete activeSockets[sockets.id]
+        if (Object.keys(activeSockets).length === 0) {
+          log("Relay seems to be closing. Exiting host.", "info");
+        }
       },
       onServerSocketEnd: async () => {
         log("Local server socket closing which will in turn close the relay socket.");
+        delete activeSockets[sockets.id]
         await beforeClosingRelaySocket();
       },
     });
@@ -175,7 +179,7 @@ export default function expose({
     const socket = await createRelayConnection();
     const {
       response: { host, key },
-    } = await hostToRelayMessage(socket, OPEN_COULOIR, requestedCouloirHost, log );
+    } = await hostToRelayMessage(socket, OPEN_COULOIR, requestedCouloirHost, log);
 
     // Wait for couloir sockets to be opened before closing the opening one
     // to ensure the couloir is not closed on the relay by reaching 0 activeSockets.
@@ -200,7 +204,7 @@ export default function expose({
     const relayUrl = new URL(`http://${host}:${relayPort}`);
     relayUrl.protocol = http ? "http" : "https";
     const hostUrl = new URL(`http://${localHost}:${localPort}`);
-    log(`Couloir opened: ${relayUrl} => ${hostUrl}`, "info");
+    log(`>>> Couloir opened: ${relayUrl} => ${hostUrl}\n`, "info");
 
     process.on("SIGINT", async () => {
       log("Received SIGINT. Stopping...");

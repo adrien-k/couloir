@@ -8,7 +8,7 @@ import { createRequire } from "module";
 const esRequire = createRequire(import.meta.url);
 const packageJson = esRequire("./package.json");
 
-import { loggerFactory } from "./src/logger.js";
+import { loggerFactory, errorMessage } from "./src/logger.js";
 import relay from "./src/relay.js";
 import expose from "./src/expose.js";
 import logo from "./src/logo.js";
@@ -56,7 +56,7 @@ yargs(hideBin(process.argv))
         });
     },
     async (argv) => {
-      console.log(logo(`Relay Server | Version ${packageJson.version}`));
+      console.log(logo(`Relay Server | Version ${packageJson.version}`, { center: true }));
       await relay(argvWithLog(argv)).start();
     },
   )
@@ -97,7 +97,7 @@ yargs(hideBin(process.argv))
           default: false,
         }),
     async (argv) => {
-      console.log(logo(`Host Server | Version ${packageJson.version}`));
+      console.log(logo(`Host Server | Version ${packageJson.version}`, { center: true }));
       await expose(argvWithLog(argv)).start();
     },
   )
@@ -108,11 +108,12 @@ yargs(hideBin(process.argv))
   })
   .demandCommand(1)
   .fail((msg, err, yargs) => {
+    const verbose = process.argv.includes("-v") || process.argv.includes("-verbose");
     if (msg) {
       console.log(yargs.help());
       console.error("\n" + msg);
     } else if (err) {
-      console.error(err.message);
+      console.error(errorMessage(err, { verbose }));
     }
     process.exit(-1);
   })
