@@ -1,7 +1,5 @@
-import net from "node:net";
+import EventEmitter from "node:events";
 import { Transform } from "node:stream";
-
-import logo from "./logo.js";
 
 export function parseHttp(head) {
   const headLines = head.replace(/\r\n$/, "").split("\r\n");
@@ -47,13 +45,20 @@ export function parseResHead(head) {
   return { version, status, statusMessage, headers };
 }
 
-class HttpHeadParserTransform extends Transform {
-  constructor(onHead) {
+export class HttpHeadParserTransform extends Transform {
+  constructor(socket, { label, transformHead = ({head}) => head } = {}) {
     super();
-    this.onHead = onHead;
-    this.headDone = false;
-    this.headBuffer = Buffer.from([]);
+    this.label = label;
+    this.socket = socket;
+    this.transformHead = transformHead;
     this.websocket = false;
+    this.events = new EventEmitter();
+
+    this.reset();
+  }
+
+  onHead(handler) {
+    this.events.on("head", handler);
   }
 
   reset() {
@@ -67,16 +72,26 @@ class HttpHeadParserTransform extends Transform {
       return callback();
     }
 
-    this.headBuffer = Buffer.concat([this.headBuffer, chunk]);
+    if (!this.headDone && chunk.indexOf("HTTP/") === -1) {
+      const msg = "Invalid protocol, probably https over http-only relay.";
+      this.socket.write(`HTTP/1.1 400 Bad Request\r\n\r\n${msg}.`);
+      this.socket.end();
+      return callback();
+    }
 
+    this.headBuffer = Buffer.concat([this.headBuffer, chunk]);
     const bodySeparator = this.headBuffer.indexOf("\r\n\r\n");
+
     if (bodySeparator > -1) {
       // +2 to include the last header CRLF.
       const bodyChunk = this.headBuffer.subarray(bodySeparator);
       const head = this.headBuffer.subarray(0, bodySeparator).toString("utf8");
-      const newHead = this.onHead(head);
+      const { startLine, headers } = parseHttp(head);
 
-      const { headers } = parseHttp(newHead);
+      this.events.emit("head", { startLine, headers });
+
+      const newHead = this.transformHead({ head, headers }) || head;
+
       this.websocket = headers["Upgrade"]?.[0]?.toLowerCase() === "websocket";
 
       this.headDone = true;
@@ -89,84 +104,41 @@ class HttpHeadParserTransform extends Transform {
 
 export function proxyHttp(
   clientSocket,
-  localHost,
-  localPort,
+  serverSocket,
   {
-    initialBuffer = Buffer.from([]),
-    onFirstByte = async () => {},
-    onRequestHead = (head) => head,
+    clientStream = clientSocket,
+    serverStream = serverSocket,
+    transformReqHead = ({ head }) => head,
     onClientSocketEnd,
-    onResponseHead = (head) => head,
+    transformResHead = ({ head }) => head,
     onServerSocketEnd,
-    log,
   }
 ) {
-  let serverSocket;
-  const requestHeadParser = new HttpHeadParserTransform(onRequestHead);
-  const responseHeadParser = new HttpHeadParserTransform(onResponseHead);
+  const requestHeadParser = new HttpHeadParserTransform(clientSocket, {label: "req",  transformHead: transformReqHead });
+  const responseHeadParser = new HttpHeadParserTransform(serverSocket, { label: "res",
+    transformHead: transformResHead,
+  });
 
+  // When multiple HTTP requests are sent consecutively through the same socket,
+  // the easiest way to understand one side is completed is to detect when the other side starts.
+  // For example, when the response is being sent it means the request is done and vice-versa.
+  requestHeadParser.onHead(() => responseHeadParser.reset())
+  responseHeadParser.onHead(() => requestHeadParser.reset());
+  
+  serverSocket.on("end", async () => {
+    await onServerSocketEnd();
+    responseHeadParser.end();
+  });
 
-  const setupServerSocket = async () => {
-    try {
-      await new Promise((resolve, reject) => {
-        serverSocket = net.createConnection({ host: localHost, port: localPort }, resolve);
-        serverSocket.on("error", (err) => {
-          reject(err);
-        });
-      });
-    } catch (err) {
-      log("Unable to connect to local server.", "error");
-      log(err, "error");
-      clientSocket.write(
-        `HTTP/1.1 502 Bad Gateway\r\n\r\n502 - Unable to connect to your local server on ${localHost}:${localPort}`
-      );
-      clientSocket.end();
-      return false;
-    }
-
-    serverSocket.on("data", (data) => {
-      requestHeadParser.reset();
-      if (responseHeadParser.writable) {
-        responseHeadParser.write(data);
-      }
-    });
-
-    serverSocket.on("end", async () => {
-      await onServerSocketEnd();
-      responseHeadParser.end();
-    });
-
-    requestHeadParser.pipe(serverSocket);
-
-    return true;
-  };
-
-  const onClientData = async (data) => {
-    await onFirstByte();
-
-    if (!serverSocket) {
-      const success = await setupServerSocket();
-      if (!success) {
-        return;
-      }
-    }
-
-    responseHeadParser.reset();
-    if (requestHeadParser.writable) {
-      requestHeadParser.write(data);
-    }
-  };
-
-  if (initialBuffer?.length) {
-    onClientData(initialBuffer);
-  }
-
-  responseHeadParser.pipe(clientSocket);
-  clientSocket.on("data", onClientData);
   clientSocket.on("end", async () => {
     await onClientSocketEnd();
     requestHeadParser.end();
   });
+
+  
+  clientStream.pipe(requestHeadParser, { end: false }).pipe(serverSocket);
+
+  serverStream.pipe(responseHeadParser, { end: false }).pipe(clientSocket);
 }
 
 // Unsafe, only use with trusted input.

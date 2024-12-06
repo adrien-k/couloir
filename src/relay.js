@@ -4,8 +4,8 @@ import crypto from "node:crypto";
 
 import { createCertServer } from "./certs.js";
 import { defaultLogger } from "./logger.js";
-import { onHostToRelayMessage, OPEN_COULOIR, JOIN_COULOIR } from "./protocol.js";
-import { htmlResponse, parseReqHead } from "./http.js";
+import { CouloirProtocolInterceptor, COULOIR_OPEN, COULOIR_JOIN, COULOIR_STREAM } from "./protocol.js";
+import { htmlResponse, HttpHeadParserTransform } from "./http.js";
 
 import logo from "./logo.js";
 
@@ -64,10 +64,12 @@ export default function relay({
       // We keep the host in place while it is bound to avoid closing a couloir that may look empty.
       const hostSocket = pendingHosts[0];
       clientSocket.bound = hostSocket.bound = true;
-      hostSocket.socket.pipe(clientSocket.socket);
-      // Write the data that has already been consumed
-      hostSocket.socket.write(clientSocket.requestBuffer);
-      clientSocket.socket.pipe(hostSocket.socket);
+      hostSocket.couloirProtocol.sendMessage(COULOIR_STREAM, null, { skipResponse: true });
+      // We pipe the stream transformers as we are sure that:
+      // - they retain protocol-level information.
+      // - their data has not been consumed yet.
+      hostSocket.stream.pipe(clientSocket.socket);
+      clientSocket.stream.pipe(hostSocket.socket);
 
       bindNextSockets(host);
     }
@@ -99,6 +101,12 @@ export default function relay({
       },
     };
 
+    const couloirProtocol = new CouloirProtocolInterceptor(socket, { log: relaySocket.log });
+    const httpHeads = new HttpHeadParserTransform(socket, { label: 'relay#' + relaySocket.id });
+
+    relaySocket.stream = socket.pipe(couloirProtocol).pipe(httpHeads)
+    relaySocket.couloirProtocol = couloirProtocol
+
     sockets[relaySocket.id] = relaySocket;
     relaySocket.log(`New connection`);
 
@@ -117,18 +125,16 @@ export default function relay({
       }
     }
 
-    function onCouloirOpen(host, sendResponse) {
+    couloirProtocol.onMessage(COULOIR_OPEN, (host, cb) => {
       relaySocket.type = TYPE_HOST;
-
+      
       if (!host.endsWith(`.${domain}`)) {
         host = `couloir${couloirCounter > 1 ? couloirCounter : ""}.${domain}`;
         couloirCounter++;
       }
 
       if (hosts[host]) {
-        return sendResponse({
-          error: `Couloir host ${host} is already opened`,
-        });
+        return cb({ error: `Couloir host ${host} is already opened` });
       }
 
       relaySocket.host = host;
@@ -146,10 +152,10 @@ export default function relay({
         certService.getCertOnDemand(host);
       }
 
-      sendResponse({ key, host });
-    }
+      cb({ key, host });
+    });
 
-    function onCouloirJoin(key, sendResponse) {
+    couloirProtocol.onMessage(COULOIR_JOIN, (key, cb) => {
       relaySocket.type = TYPE_HOST;
       const host = keyToHost[key];
 
@@ -157,54 +163,19 @@ export default function relay({
         relaySocket.host = host;
         hosts[host].push(relaySocket);
         relaySocket.log("identified");
-        sendResponse({});
+        cb();
         bindNextSockets(host);
       } else {
-        sendResponse({
+        cb({
           error: "Invalid couloir key. Please restart your couloir client.",
-        });
+        })
       }
-    }
+    });
 
-    let firstByte = true;
-    const onData = (data) => {
-      if (firstByte) {
-        firstByte = false;
-
-        const couloirMessage = onHostToRelayMessage(data, socket, relaySocket.log);
-        if (couloirMessage) {
-          const { key, payload, sendResponse } = couloirMessage;
-          const handler = { [OPEN_COULOIR]: onCouloirOpen, [JOIN_COULOIR]: onCouloirJoin }[key];
-
-          if (handler) {
-            handler(payload, sendResponse);
-            return socket.off("data", onData);
-          }
-        }
-
-        if (data.indexOf("HTTP/") === -1) {
-          const msg = "Invalid protocol, probably https over http-only relay.";
-          relaySocket.log(msg, "error");
-          socket.write(`HTTP/1.1 400 Bad Request\r\n\r\n${msg}.`);
-          socket.end();
-          return socket.off("data", onData);
-        }
+    httpHeads.onHead(({ headers }) => {
+      if (relaySocket.type === TYPE_HOST) { 
+        return
       }
-
-      relaySocket.requestBuffer = Buffer.concat([relaySocket.requestBuffer, data]);
-      const headLastByte = relaySocket.requestBuffer.indexOf("\r\n\r\n");
-
-      // Wait for the end of head
-      if (headLastByte === -1) {
-        return;
-      }
-
-      // We got the head, no need to look further in socket stream
-      socket.off("data", onData);
-
-      const head = relaySocket.requestBuffer.subarray(0, headLastByte + 2).toString();
-      const { headers } = parseReqHead(head);
-
       // This removes the potential port that is part of the Host but not of how couloirs
       // are identified.
       const host = headers["Host"]?.[0]?.replace(/:.*$/, "");
@@ -244,9 +215,7 @@ export default function relay({
         );
         socket.end();
       }
-    };
-
-    socket.on("data", onData);
+    });
 
     function socketCleanup() {
       delete sockets[relaySocket.id];

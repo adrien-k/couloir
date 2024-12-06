@@ -1,9 +1,8 @@
 import net from "node:net";
 import tls from "node:tls";
-import { OPEN_COULOIR, JOIN_COULOIR } from "./protocol.js";
+import { COULOIR_OPEN, COULOIR_JOIN, COULOIR_STREAM, CouloirProtocolInterceptor } from "./protocol.js";
 import { proxyHttp, parseReqHead, parseResHead, serializeReqHead } from "./http.js";
 import { defaultLogger } from "./logger.js";
-import { hostToRelayMessage } from "./protocol.js";
 
 // This defines the number of concurrent socket connections opened with the relay
 // which in turn allows the relay to serve as many requests simultaneously.
@@ -89,7 +88,7 @@ export default function expose({
       const sockets = await relaySocketPromise;
 
       const beforeClosingRelaySocket = async () => {
-        if (throttled) {
+        if (throttled && !closed) {
           log("Throttle mode. Opening next relay socket before relay socket close.");
           // When we reached the max number of sockets (throttled), we need to open a socket
           // as soon as one closes.
@@ -111,7 +110,7 @@ export default function expose({
         `Error connecting: ${err.message}. Retrying in 5s (${
           try_count + 1
         }/${MAX_CONNECTION_TRIES})`,
-        "error",
+        "error"
       );
       log(err.stack, "debug");
       await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -120,55 +119,66 @@ export default function expose({
   }
 
   async function joinCouloir(sockets, couloirKey, { beforeClosingRelaySocket }) {
-    const { responseBuffer: initialBuffer } = await hostToRelayMessage(
-      sockets.relaySocket,
-      JOIN_COULOIR,
-      couloirKey,
-      log,
-    );
+    const clientProtocol = new CouloirProtocolInterceptor(sockets.relaySocket, { log });
+    const clientSocketStream = sockets.relaySocket.pipe(clientProtocol);
 
-    // This is a singular socket so we can init the access log on the request
-    // and log it on the response without conflicts.
-    let accessLog = "";
-    let reqStart;
+    clientProtocol.onMessage(COULOIR_STREAM, async () => {
+      await openNextRelaySocket(couloirKey);
 
-    proxyHttp(sockets.relaySocket, localHost, localPort, {
-      log,
-      initialBuffer,
-      onFirstByte: async () => {
-        await openNextRelaySocket(couloirKey);
-      },
-      onRequestHead: (head) => {
-        reqStart = Date.now();
-        const headParts = parseReqHead(head);
-        const { method, path } = headParts;
-        accessLog = `${method} ${path}`;
+      const serverSocket = net.createConnection({ host: localHost, port: localPort }, () => {
+        // This is a singular socket so we can init the access log on the request
+        // and log it on the response without conflicts.
+        let accessLog = "";
+        let reqStart;
 
-        if (overrideHost) {
-          headParts.headers["Host"] = [overrideHost];
-        }
+        proxyHttp(sockets.relaySocket, serverSocket, {
+          clientStream: clientSocketStream,
+          transformReqHead: ({ head }) => {
+            reqStart = Date.now();
+            const headParts = parseReqHead(head);
+            const { method, path } = headParts;
+            accessLog = `${method} ${path}`;
 
-        return serializeReqHead(headParts);
-      },
-      onResponseHead: (head) => {
-        const { status } = parseResHead(head);
-        accessLog += ` -> ${status} (${Date.now() - reqStart} ms)`;
-        log(accessLog, "info");
-        return head;
-      },
-      onClientSocketEnd: () => {
-        log("Relay socket closed. Closing local server socket.");
-        delete activeSockets[sockets.id]
-        if (Object.keys(activeSockets).length === 0) {
-          log("Relay seems to be closing. Exiting host.", "info");
-        }
-      },
-      onServerSocketEnd: async () => {
-        log("Local server socket closing which will in turn close the relay socket.");
-        delete activeSockets[sockets.id]
-        await beforeClosingRelaySocket();
-      },
+            if (overrideHost) {
+              headParts.headers["Host"] = [overrideHost];
+            }
+
+            return serializeReqHead(headParts);
+          },
+          transformResHead: ({ head }) => {
+            const { status } = parseResHead(head);
+            accessLog += ` -> ${status} (${Date.now() - reqStart} ms)`;
+            log(accessLog, "info");
+            return head;
+          },
+          onClientSocketEnd: () => {
+            log("Relay socket closed. Closing local server socket.");
+            delete activeSockets[sockets.id];
+            if (Object.keys(activeSockets).length === 0) {
+              log("Relay seems to be closing. Exiting host.", "info");
+              closed = true
+            }
+          },
+          onServerSocketEnd: async () => {
+            log("Local server socket closing which will in turn close the relay socket.");
+            delete activeSockets[sockets.id];
+            await beforeClosingRelaySocket();
+          },
+        });
+      });
+
+      serverSocket.on("error", (err) => {
+        log("Unable to connect to local server.", "error");
+        log(err, "error");
+        clientSocketStream.write(
+          `HTTP/1.1 502 Bad Gateway\r\n\r\n502 - Unable to connect to your local server on ${localHost}:${localPort}`
+        );
+        clientSocketStream.end();
+        return;
+      });
     });
+
+    await clientProtocol.sendMessage(COULOIR_JOIN, couloirKey);
   }
 
   async function openCouloir() {
@@ -177,9 +187,12 @@ export default function expose({
       requestedCouloirHost = `${name}.${relayHost}`;
     }
     const socket = await createRelayConnection();
+    const protocol = new CouloirProtocolInterceptor(socket, { log });
+    socket.pipe(protocol);
+
     const {
-      response: { host, key },
-    } = await hostToRelayMessage(socket, OPEN_COULOIR, requestedCouloirHost, log);
+      host, key,
+    } = await protocol.sendMessage(COULOIR_OPEN, requestedCouloirHost);
 
     // Wait for couloir sockets to be opened before closing the opening one
     // to ensure the couloir is not closed on the relay by reaching 0 activeSockets.

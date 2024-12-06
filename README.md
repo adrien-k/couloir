@@ -110,7 +110,7 @@ Install pm2 with `npm install -g pm2`.
 Then:
 
 ```sh
-pm2 start "couloir relay sub.domain.com" --name couloir
+pm2 start "couloir relay sub.domain.com --email your@email.com" --name couloir
 pm2 save
 # To have the daemon run on boot. Follow instructions.
 pm2 startup
