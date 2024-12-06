@@ -122,7 +122,7 @@ async function sendRelayRequest(httpRequest, { socket } = {}) {
   });
 }
 
-it("tunnels http request/response from relay to local server and back", async () => {
+it.only("tunnels http request/response from relay to local server and back", async () => {
   const httpRequestHead = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\n";
   const httpResponseHead = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n";
   const httpRequest = Buffer.concat([Buffer.from(httpRequestHead), BINARY_BODY]);
@@ -141,7 +141,7 @@ it("tunnels http request/response from relay to local server and back", async ()
   });
 });
 
-it.only("can handle multiple sockets in series when reaching max maxConcurrency", async () => {
+it("can handle multiple sockets in series when reaching max maxConcurrency", async () => {
   const httpRequest =
     "GET / HTTP/1.1\r\nHost: couloir.test.local\r\nConnection: keep-alive\r\n\r\nfoo";
   const httpResponse = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar";
@@ -214,7 +214,7 @@ it("can handle multiple sockets in parallel", async () => {
   });
 });
 
-it.only("can serve websockets", async () => {
+it("can serve websockets", async () => {
   const httpRequest =
     "GET / HTTP/1.1\r\n" +
     "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: in1gAuzHsuThjnQPIIaEhg==\r\n" +
