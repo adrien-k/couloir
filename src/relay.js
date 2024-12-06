@@ -4,8 +4,9 @@ import crypto from "node:crypto";
 
 import { createCertServer } from "./certs.js";
 import { defaultLogger } from "./logger.js";
-import { onHostToRelayMessage, OPEN_COULOIR, JOIN_COULOIR } from "./protocol.js";
-import { htmlResponse, parseReqHead } from "./http.js";
+import { COULOIR_OPEN, COULOIR_JOIN } from "./protocol.js";
+import { htmlResponse } from "./http.js";
+import RelaySocket from "./relay-socket.js";
 
 import logo from "./logo.js";
 
@@ -35,8 +36,6 @@ export default function relay({
   const sockets = {};
   const keyToHost = {};
 
-  let socketCounter = 0;
-
   const createRelayServers = (onSocket) => {
     if (!http) {
       const certService = createCertServer({
@@ -63,42 +62,14 @@ export default function relay({
       const clientSocket = clients[host].shift();
       // We keep the host in place while it is bound to avoid closing a couloir that may look empty.
       const hostSocket = pendingHosts[0];
-      clientSocket.bound = hostSocket.bound = true;
-      hostSocket.socket.pipe(clientSocket.socket);
-      // Write the data that has already been consumed
-      hostSocket.socket.write(clientSocket.requestBuffer);
-      clientSocket.socket.pipe(hostSocket.socket);
 
+      clientSocket.proxy(hostSocket);
       bindNextSockets(host);
     }
   }
 
   const { relay, certService } = createRelayServers((socket) => {
-    // A Relay socket can be either a regular client HTTP requestChunks or a host proxy socket.
-    // They are stored in either `hosts` or `clients` hashes respectively and pulled by bindNextSockets
-    const relaySocket = {
-      id: ++socketCounter,
-      socket,
-      ip: socket.remoteAddress,
-      // Null until we identify which couloir host this socket belongs to.
-      host: null,
-      // In case some data is already read from the client socket before piping to the host
-      // we keep it aside to write it first.
-      requestBuffer: Buffer.from([]),
-      // Host or Client socket
-      type: null,
-      // True as soon as the socket is used for relaying
-      bound: false,
-      log: (message, level) => {
-        let prefix = "";
-        prefix += verbose ? `[${relaySocket.ip}] ` : "";
-        prefix += `[#${relaySocket.id}] `;
-        prefix += relaySocket.type ? `[${relaySocket.type}] ` : "";
-        prefix += relaySocket.host ? `[${relaySocket.host}] ` : "";
-        log(`${prefix}${message}`, level);
-      },
-    };
-
+    const relaySocket = new RelaySocket(socket, { log, verbose });
     sockets[relaySocket.id] = relaySocket;
     relaySocket.log(`New connection`);
 
@@ -117,18 +88,16 @@ export default function relay({
       }
     }
 
-    function onCouloirOpen(host, sendResponse) {
+    relaySocket.onMessage(COULOIR_OPEN, (host, cb) => {
       relaySocket.type = TYPE_HOST;
-
+      
       if (!host.endsWith(`.${domain}`)) {
         host = `couloir${couloirCounter > 1 ? couloirCounter : ""}.${domain}`;
         couloirCounter++;
       }
 
       if (hosts[host]) {
-        return sendResponse({
-          error: `Couloir host ${host} is already opened`,
-        });
+        return cb({ error: `Couloir host ${host} is already opened` });
       }
 
       relaySocket.host = host;
@@ -146,10 +115,10 @@ export default function relay({
         certService.getCertOnDemand(host);
       }
 
-      sendResponse({ key, host });
-    }
+      cb({ key, host });
+    });
 
-    function onCouloirJoin(key, sendResponse) {
+    relaySocket.onMessage(COULOIR_JOIN, (key, cb) => {
       relaySocket.type = TYPE_HOST;
       const host = keyToHost[key];
 
@@ -157,54 +126,19 @@ export default function relay({
         relaySocket.host = host;
         hosts[host].push(relaySocket);
         relaySocket.log("identified");
-        sendResponse({});
+        cb();
         bindNextSockets(host);
       } else {
-        sendResponse({
+        cb({
           error: "Invalid couloir key. Please restart your couloir client.",
-        });
+        })
       }
-    }
+    });
 
-    let firstByte = true;
-    const onData = (data) => {
-      if (firstByte) {
-        firstByte = false;
-
-        const couloirMessage = onHostToRelayMessage(data, socket, relaySocket.log);
-        if (couloirMessage) {
-          const { key, payload, sendResponse } = couloirMessage;
-          const handler = { [OPEN_COULOIR]: onCouloirOpen, [JOIN_COULOIR]: onCouloirJoin }[key];
-
-          if (handler) {
-            handler(payload, sendResponse);
-            return socket.off("data", onData);
-          }
-        }
-
-        if (data.indexOf("HTTP/") === -1) {
-          const msg = "Invalid protocol, probably https over http-only relay.";
-          relaySocket.log(msg, "error");
-          socket.write(`HTTP/1.1 400 Bad Request\r\n\r\n${msg}.`);
-          socket.end();
-          return socket.off("data", onData);
-        }
+    relaySocket.onHead(({ headers }) => {
+      if (relaySocket.type === TYPE_HOST) { 
+        return
       }
-
-      relaySocket.requestBuffer = Buffer.concat([relaySocket.requestBuffer, data]);
-      const headLastByte = relaySocket.requestBuffer.indexOf("\r\n\r\n");
-
-      // Wait for the end of head
-      if (headLastByte === -1) {
-        return;
-      }
-
-      // We got the head, no need to look further in socket stream
-      socket.off("data", onData);
-
-      const head = relaySocket.requestBuffer.subarray(0, headLastByte + 2).toString();
-      const { headers } = parseReqHead(head);
-
       // This removes the potential port that is part of the Host but not of how couloirs
       // are identified.
       const host = headers["Host"]?.[0]?.replace(/:.*$/, "");
@@ -244,9 +178,7 @@ export default function relay({
         );
         socket.end();
       }
-    };
-
-    socket.on("data", onData);
+    });
 
     function socketCleanup() {
       delete sockets[relaySocket.id];
@@ -294,9 +226,7 @@ export default function relay({
     stop: async ({ force = false } = {}) => {
       await certService?.stop();
       for (const relaySocket of Object.values(sockets)) {
-        if (!relaySocket.bound || force) {
-          await new Promise((r) => relaySocket.socket.end(r));
-        }
+        await relaySocket.end({ force })
       }
       await new Promise((r) => relay.close(r));
     },
