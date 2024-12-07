@@ -1,7 +1,7 @@
-import { COULOIR_STREAM, CouloirProtocolInterceptor } from "./protocol.js";
-import { HttpHeadParserTransform } from "./http.js";
+import { COULOIR_STREAM } from "../protocol.js";
+import { HttpHeadParserTransform } from "../http.js";
 
-import CouloirClientSocket from "./couloir-client-socket.js";
+import CouloirClientSocket from "../couloir-client-socket.js";
 
 export default class RelaySocket extends CouloirClientSocket {
   constructor(socket, { log, verbose }) {
@@ -16,7 +16,7 @@ export default class RelaySocket extends CouloirClientSocket {
     this.bound = false;
     this.httpHead = new HttpHeadParserTransform(socket);
 
-    this.stream = this.stream.pipe(this.httpHead);
+    this.stream = this.pipe(this.httpHead);
 
     this.originalLog = log;
     this.verbose = verbose

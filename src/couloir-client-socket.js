@@ -24,6 +24,6 @@ export default class CouloirClientSocket {
   }
 
   pipe(otherStream, options = {}) {
-    this.stream.pipe(otherStream, options);
+    return this.stream.pipe(otherStream, options);
   }
 }

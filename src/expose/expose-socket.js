@@ -1,9 +1,9 @@
 import net from "node:net";
 import tls from "node:tls";
 
-import CouloirClientSocket from "./couloir-client-socket.js";
-import { COULOIR_STREAM, COULOIR_JOIN } from "./protocol.js";
-import { proxyHttp, parseReqHead, parseResHead, serializeReqHead } from "./http.js";
+import CouloirClientSocket from "../couloir-client-socket.js";
+import { COULOIR_STREAM, COULOIR_JOIN } from "../protocol.js";
+import { proxyHttp, parseReqHead, parseResHead, serializeReqHead } from "../http.js";
 
 export default class ExposeSocket extends CouloirClientSocket {
   constructor(socket, { log, localHost, localPort, overrideHost }) {
@@ -94,7 +94,7 @@ export default class ExposeSocket extends CouloirClientSocket {
         clientSocketStream.end();
         return;
       });
-    });
+    }, { skipResponse: true });
 
     await this.sendMessage(COULOIR_JOIN, couloirKey);
   }

@@ -77,7 +77,7 @@ async function createClient(absoluteCertsDirectory) {
  * Code inspired from https://github.com/publishlab/node-acme-client/blob/master/examples/http-01/http-01.js
  *
  */
-export function createCertServer({ domain, certsDirectory, log, email, hosts } = {}) {
+export function createCertServer({ domain, certsDirectory, log, email, allowServername } = {}) {
   const originalLog = log;
   log = (msg, level) => originalLog(`[Cert] ${msg}`, level);
 
@@ -98,23 +98,15 @@ export function createCertServer({ domain, certsDirectory, log, email, hosts } =
     const certificateStore = await certsPromise;
     const wildcardServername = servername.replace(/^[^.]+\./, "*.");
 
-    if (
-      !(
-        domain === servername ||
-        `couloir.${domain}` === servername ||
-        hosts[servername] ||
-        certificateStore[servername] ||
-        certificateStore[wildcardServername]
-      )
-    ) {
-      throw new Error("Invalid Couloir host");
-    }
-
     /* Certificate exists */
     for (const name of [servername, wildcardServername]) {
       if (certificateStore[name]) {
         return certificateStore[name];
       }
+    }
+
+    if (!allowServername(servername)) {
+      throw new Error("Invalid host");
     }
 
     if (!client) {

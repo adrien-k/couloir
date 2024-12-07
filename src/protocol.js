@@ -57,21 +57,28 @@ export class CouloirProtocolInterceptor extends Transform {
     return responsePromise;
   }
 
-  onMessage(key, handler) {
+  onMessage(key, handler, { skipResponse = false } = {}) {
     const handlerWithResponse = async (message) => {
       this.log(`Received Couloir message: ${key} ${message}`);
       this.protocolEvents.off(key, handlerWithResponse);
 
-      handler(message, /* cb is optional here */(response) => {
+      // Some handler need to send the message in the same event loop
+      // cycle to ensure a correct message order. (ex COULOIR JOIN ACK
+      // and then COULOIR STREAM)
+      let response = handler(message);
+      if (!skipResponse) {
+        if (response instanceof Promise) {
+          response = await response;
+        }
         const jsonResponse = JSON.stringify(response);
         this.sendMessage(this.ackKey(key), jsonResponse, { skipResponse: true });
-      });
+      }
     };
     this.protocolEvents.on(key, handlerWithResponse);
   }
 
   _transform(chunk, _encoding, callback) {
-    let rest = chunk
+    let rest = chunk;
     while (rest.indexOf("COULOIR") === 0) {
       const cutoff = rest.indexOf(MESSAGE_SEPARATOR);
       const message = rest.subarray(0, cutoff).toString();
