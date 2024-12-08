@@ -6,11 +6,12 @@ import { COULOIR_STREAM, COULOIR_JOIN } from "../protocol.js";
 import { proxyHttp, parseReqHead, parseResHead, serializeReqHead } from "../http.js";
 
 export default class ExposeSocket extends CouloirClientSocket {
-  constructor(socket, { log, localHost, localPort, overrideHost }) {
+  constructor(socket, { verbose, log, localHost, localPort, overrideHost }) {
     super(socket);
     this.localHost = localHost;
     this.localPort = localPort;
     this.overrideHost = overrideHost;
+    this.verbose = verbose;
     this.originalLog = log;
     this.joined = false;
     this.bound = false;
@@ -24,7 +25,10 @@ export default class ExposeSocket extends CouloirClientSocket {
   }
 
   log(message, level) {
-    const prefix = `[#${this.id}] `;
+    let prefix = "";
+    if (this.verbose) {
+      prefix += `[#${this.id}] `;
+    }
     this.originalLog(`${prefix}${message}`, level);
   }
 

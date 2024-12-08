@@ -81,7 +81,7 @@ export class RelayServer {
 
     const couloir = (this.couloirs[host] = new RelayCouloir(this, host));
     this.keyToHost[couloir.key] = host;
-    this.log(`Couloir opened`, "info");
+    this.log(`Couloir opened "${host}"`, "info");
 
     if (this.certService) {
       // Already start the let's encrypt cert generation.

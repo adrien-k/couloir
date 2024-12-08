@@ -1,5 +1,5 @@
 import { createCertServer } from "../certs.js";
-import { defaultLogger } from "../logger.js";
+import { loggerFactory } from "../logger.js";
 import { RelayServer } from "./relay-server.js";
 
 export default function relay({
@@ -9,7 +9,7 @@ export default function relay({
   http = false,
   email = "test@example.com",
   certsDirectory = "~/.couloir.certs",
-  log = defaultLogger,
+  log = loggerFactory(),
 }) {
   let relay, certService;
   if (!http) {
