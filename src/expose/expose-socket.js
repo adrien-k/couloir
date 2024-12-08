@@ -12,6 +12,15 @@ export default class ExposeSocket extends CouloirClientSocket {
     this.localPort = localPort;
     this.overrideHost = overrideHost;
     this.originalLog = log;
+    this.joined = false;
+    this.bound = false;
+
+    socket.on("close", () => {
+      if (this.joined && !this.bound) {
+        // Only reason to close an unbound socket is if the relay is closing.
+        this.log("Relay is closing.", "info");
+      }
+    });
   }
 
   log(message, level) {
@@ -51,7 +60,7 @@ export default class ExposeSocket extends CouloirClientSocket {
       COULOIR_STREAM,
       async () => {
         await beforeStream();
-
+        this.bound = true;
         this.localSocket = net.createConnection(
           { host: this.localHost, port: this.localPort },
           () => {
@@ -81,10 +90,20 @@ export default class ExposeSocket extends CouloirClientSocket {
                 return head;
               },
               onClientSocketEnd: async () => {
+                if (this.closedBy) {
+                  return;
+                }
+
+                this.closedBy = "client";
                 this.log("Relay socket closed. Closing local server socket.");
                 await beforeClose();
               },
               onServerSocketEnd: async () => {
+                if (this.closedBy) {
+                  return;
+                }
+
+                this.closedBy = "server";
                 this.log("Local server socket closing which will in turn close the relay socket.");
                 await beforeClose();
               },
@@ -106,5 +125,6 @@ export default class ExposeSocket extends CouloirClientSocket {
     );
 
     await this.sendMessage(COULOIR_JOIN, couloirKey);
+    this.joined = true;
   }
 }

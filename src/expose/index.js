@@ -27,28 +27,7 @@ export default function expose(exposeOptions) {
   let relaySocketPromise;
   let pendingSockets = 0;
 
-  async function openNextRelaySocket(couloirKey) {
-    if (stopped) {
-      return;
-    }
-
-    const activeSocketCount = Object.keys(activeSockets).length;
-
-    if (activeSocketCount + pendingSockets >= maxConcurrency) {
-      log(`Too many sockets. Skipping opening new socket.`);
-      throttled = true;
-      return;
-    } else {
-      throttled = false;
-    }
-
-    log(`Opening relay socket (${activeSocketCount + 1}/${maxConcurrency})`);
-    pendingSockets++;
-    const socket = await ExposeSocket.create(exposeOptions).finally(() => {
-      pendingSockets--;
-    });
-    activeSockets[socket.id] = socket;
-
+  async function joinCouloir(socket, couloirKey) {
     const beforeStream = async () => {
       await openNextRelaySocket(couloirKey);
     };
@@ -72,6 +51,31 @@ export default function expose(exposeOptions) {
     await socket.joinCouloir(couloirKey, { beforeStream, beforeClose });
   }
 
+  async function openNextRelaySocket(couloirKey) {
+    if (stopped) {
+      return;
+    }
+
+    const activeSocketCount = Object.keys(activeSockets).length;
+
+    if (activeSocketCount + pendingSockets >= maxConcurrency) {
+      log(`Too many sockets. Skipping opening new socket.`);
+      throttled = true;
+      return;
+    } else {
+      throttled = false;
+    }
+
+    log(`Opening relay socket (${activeSocketCount + 1}/${maxConcurrency})`);
+    pendingSockets++;
+    const socket = await ExposeSocket.create(exposeOptions).finally(() => {
+      pendingSockets--;
+    });
+    activeSockets[socket.id] = socket;
+
+    await joinCouloir(socket, couloirKey);
+  }
+
   async function openCouloir() {
     let requestedCouloirHost = relayHost;
     if (name) {
@@ -84,6 +88,7 @@ export default function expose(exposeOptions) {
     // to ensure the couloir is not stopped on the relay by reaching 0 activeSockets.
     await openNextRelaySocket(key);
     socket.end();
+    // await joinCouloir(socket, key);
 
     return host;
   }
@@ -100,7 +105,7 @@ export default function expose(exposeOptions) {
     const relayUrl = new URL(`http://${host}:${relayPort}`);
     relayUrl.protocol = http ? "http" : "https";
     const hostUrl = new URL(`http://${localHost}:${localPort}`);
-    log(`>>> Couloir opened: ${relayUrl} => ${hostUrl}\n`, "info");
+    log(`>>> Couloir opened: ${relayUrl} => ${hostUrl}`, "info");
 
     process.on("SIGINT", onSigInt);
   };
