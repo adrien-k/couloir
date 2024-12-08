@@ -26,17 +26,19 @@ function assertHttpEqual(req, head, body) {
 }
 
 let relayConfig, exposeConfig, logs, localServerReceived, responseCounter;
-const logFactory = (source) => (msg, level) => {
-  const logMsg = `[${level}] [${source}] ${msg}`;
-  if (process.env.LOG === "true") {
-    console.log(logMsg);
-    if (msg instanceof Error) {
-      console.error(msg.stack);
+const logFactory =
+  (source) =>
+  (msg, level = "info") => {
+    const logMsg = `[${source}] ${level}: ${msg}`;
+    if (process.env.LOG === "true") {
+      console.log(logMsg);
+      if (msg instanceof Error) {
+        console.error(msg.stack);
+      }
+    } else {
+      logs.push(logMsg);
     }
-  } else {
-    logs.push(logMsg);
-  }
-};
+  };
 
 beforeEach(() => {
   logs = [];
