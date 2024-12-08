@@ -1,5 +1,5 @@
 import { COULOIR_OPEN } from "../protocol.js";
-import { defaultLogger } from "../logger.js";
+import { loggerFactory } from "../logger.js";
 import ExposeSocket from "./expose-socket.js";
 
 // This defines the number of concurrent socket connections opened with the relay
@@ -18,7 +18,7 @@ export default function expose(exposeOptions) {
     relayPort = 443,
     maxConcurrency = DEFAULT_MAX_CONCURRENCY,
     http = false,
-    log = defaultLogger,
+    log = loggerFactory(),
   } = exposeOptions;
 
   let stopped = false;
@@ -57,13 +57,9 @@ export default function expose(exposeOptions) {
     }
 
     const activeSocketCount = Object.keys(activeSockets).length;
-
-    if (activeSocketCount + pendingSockets >= maxConcurrency) {
-      log(`Too many sockets. Skipping opening new socket.`);
-      throttled = true;
-      return;
-    } else {
-      throttled = false;
+    throttled = activeSocketCount + pendingSockets >= maxConcurrency;
+    if (throttled) {
+      return log(`Too many sockets. Skipping opening new socket.`);
     }
 
     log(`Opening relay socket (${activeSocketCount + 1}/${maxConcurrency})`);
@@ -84,11 +80,8 @@ export default function expose(exposeOptions) {
     const socket = await ExposeSocket.create(exposeOptions);
     const { host, key } = await socket.sendMessage(COULOIR_OPEN, requestedCouloirHost);
 
-    // Wait for couloir sockets to be opened before closing the opening one
-    // to ensure the couloir is not stopped on the relay by reaching 0 activeSockets.
-    await openNextRelaySocket(key);
-    socket.end();
-    // await joinCouloir(socket, key);
+    activeSockets[socket.id] = socket;
+    await joinCouloir(socket, key);
 
     return host;
   }

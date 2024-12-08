@@ -10,8 +10,8 @@ export default class CouloirClientSocket {
     this.stream = socket.pipe(this.couloirProtocol);
   }
 
-  onMessage(key, handler) {
-    this.couloirProtocol.onMessage(key, handler);
+  onMessage(key, handler, options) {
+    this.couloirProtocol.onMessage(key, handler, options);
   }
 
   sendMessage(key, value, options) {

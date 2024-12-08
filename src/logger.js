@@ -5,7 +5,7 @@ export function timestamp() {
     .join(":");
 }
 
-export function loggerFactory({ verbose }) {
+export function loggerFactory({ verbose = false } = {}) {
   return function log(msg, level = "debug") {
     if (level === "debug" && !verbose) {
       return;
@@ -14,7 +14,13 @@ export function loggerFactory({ verbose }) {
     if (msg instanceof Error) {
       msg = errorMessage(msg, { verbose });
     }
-    defaultLogger(msg, level);
+
+    msg = `[${timestamp()}] ${level}: ${msg}`;
+    if (level === "error" || level === "fatal" || level === "warn") {
+      console.error(msg);
+    } else {
+      console.log(msg);
+    }
   };
 }
 

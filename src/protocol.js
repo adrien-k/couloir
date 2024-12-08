@@ -61,17 +61,15 @@ export class CouloirProtocolInterceptor extends Transform {
     const handlerWithResponse = async (message) => {
       this.protocolEvents.off(key, handlerWithResponse);
 
-      // Some handler need to send the message in the same event loop
-      // cycle to ensure a correct message order. (ex COULOIR JOIN ACK
-      // and then COULOIR STREAM)
-      let response = handler(message);
-      if (!skipResponse) {
-        if (response instanceof Promise) {
-          response = await response;
+      let responseSent = false;
+      const sendResponseOnce = (response) => {
+        if (!responseSent && !skipResponse) {
+          responseSent = true;
+          this.sendMessage(this.ackKey(key), JSON.stringify(response), { skipResponse: true });
         }
-        const jsonResponse = JSON.stringify(response);
-        this.sendMessage(this.ackKey(key), jsonResponse, { skipResponse: true });
-      }
+      };
+      const response = await handler(message, sendResponseOnce);
+      sendResponseOnce(response);
     };
     this.protocolEvents.on(key, handlerWithResponse);
   }

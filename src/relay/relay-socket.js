@@ -29,7 +29,7 @@ export default class RelaySocket extends CouloirClientSocket {
   log(message, level) {
     let prefix = "";
     prefix += this.relay.verbose ? `[${this.ip}] ` : "";
-    prefix += `[#${this.id}] `;
+    prefix += this.relay.verbose ? `[#${this.id}] ` : "";
     prefix += this.type ? `[${this.type}] ` : "";
     prefix += this.host ? `[${this.host}] ` : "";
     this.relay.log(`${prefix}${message}`, level);
@@ -65,10 +65,12 @@ export default class RelaySocket extends CouloirClientSocket {
       }
     });
 
-    this.onMessage(COULOIR_JOIN, (key) => {
+    this.onMessage(COULOIR_JOIN, (key, sendResponse) => {
       const couloir = this.relay.getCouloir(key);
 
       if (couloir) {
+        // Send the ACK already to ensure it goes out before the stream starts
+        sendResponse();
         couloir.addHostSocket(this);
       } else {
         return { error: "Invalid couloir key. Please restart your couloir client." };
