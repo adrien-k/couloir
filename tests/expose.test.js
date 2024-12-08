@@ -65,7 +65,7 @@ async function setup(
     onLocalConnection = (socket) => {
       socket.on("data", (data) => {
         localServerReceived.push(data);
-        
+
         socket.write(typeof httpResponse === "function" ? httpResponse() : httpResponse);
         if (!keepAlive) {
           socket.end();
@@ -74,7 +74,7 @@ async function setup(
       });
     },
   },
-  testFn
+  testFn,
 ) {
   const relayServer = relay(relayConfig);
   const localServer = net.createServer(onLocalConnection);
@@ -135,7 +135,7 @@ it("tunnels http request/response from relay to local server and back", async ()
     assertHttpEqual(
       localServerReceived[0],
       "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n",
-      BINARY_BODY
+      BINARY_BODY,
     );
     assertHttpEqual(relayResponse, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n", BINARY_BODY);
   });
@@ -286,13 +286,13 @@ it("can handle multiple requests in the same socket", async () => {
     const response1 = await sendRelayRequest(httpRequest, { socket });
     assert.equal(
       localServerReceived[0].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo"
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
     );
     assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
     const response2 = await sendRelayRequest(httpRequest, { socket });
     assert.equal(
       localServerReceived[1].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo"
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
     );
     assert.equal(response2.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2");
   });
@@ -304,7 +304,7 @@ it("closes the couloir when stopping the proxy", async () => {
   await setup({}, async ({ bindServer }) => {
     assert.equal(
       (await sendRelayRequest(httpRequest)).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1"
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1",
     );
 
     await bindServer.stop();
@@ -335,7 +335,7 @@ it("should not close the couloir when closing the last client socket", async () 
     // Check that the couloir is still opened
     assert.equal(
       (await sendRelayRequest(httpRequest)).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2"
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2",
     );
   });
 });
@@ -361,7 +361,7 @@ describe("with TLS", () => {
           () => {
             socket.on("data", resolve);
             socket.write(httpRequest);
-          }
+          },
         );
       });
 

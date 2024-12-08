@@ -95,7 +95,7 @@ export default function expose(exposeOptions) {
         `Error connecting: ${err.message || err}. Retrying in 5s (${
           try_count + 1
         }/${MAX_CONNECTION_TRIES})`,
-        "error"
+        "error",
       );
       log(err.stack, "debug");
       await new Promise((resolve) => setTimeout(resolve, 5000));

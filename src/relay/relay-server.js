@@ -34,9 +34,9 @@ export class RelayServer {
   }
 
   async listen() {
-    const server = this.server = this.http
+    const server = (this.server = this.http
       ? net.createServer(this.#onSocket.bind(this))
-      : tls.createServer({ SNICallback: this.certService.SNICallback }, this.#onSocket.bind(this));
+      : tls.createServer({ SNICallback: this.certService.SNICallback }, this.#onSocket.bind(this)));
 
     return new Promise((resolve, reject) => {
       server.on("error", reject);
@@ -65,91 +65,42 @@ export class RelayServer {
     }
   }
 
+  openCouloir(host) {
+    if (!host.endsWith(`.${this.domain}`)) {
+      host = `couloir.${this.domain}`;
+      let counter = 0;
+      while (this.couloirs[host]) {
+        counter++;
+        host = `couloir${counter}.${this.domain}`;
+      }
+    }
+
+    if (this.couloirs[host]) {
+      throw new Error(`Couloir host ${host} is already opened`);
+    }
+
+    const couloir = (this.couloirs[host] = new RelayCouloir(this, host, { log: this.log }));
+    this.keyToHost[couloir.key] = host;
+    this.log(`Couloir opened`, "info");
+
+    if (this.certService) {
+      // Already start the let's encrypt cert generation.
+      // We don't await it on purpose
+      this.certService.getCertOnDemand(host);
+    }
+
+    return couloir;
+  }
+
+  getCouloir(key) {
+    const host = this.keyToHost[key];
+    return host && this.couloirs[host];
+  }
+
   #onSocket(socket) {
-    const relaySocket = new RelaySocket(socket, { log: this.log, verbose: this.verbose });
+    const relaySocket = new RelaySocket(this, socket, { log: this.log, verbose: this.verbose });
     this.sockets[relaySocket.id] = relaySocket;
     relaySocket.log(`New connection`);
-
-    relaySocket.onMessage(COULOIR_OPEN, (host) => {
-      relaySocket.type = TYPE_HOST;
-
-      if (!host.endsWith(`.${this.domain}`)) {
-        host = `couloir.${this.domain}`;
-        let counter = 0;
-        while (this.couloirs[host]) {
-          counter++;
-          host = `couloir${counter}.${this.domain}`;
-        }
-      }
-
-      if (this.couloirs[host]) {
-        return { error: `Couloir host ${host} is already opened` };
-      }
-
-      const couloir = (this.couloirs[host] = new RelayCouloir(this, host, { log: this.log }));
-      this.keyToHost[couloir.key] = relaySocket.host = host;
-      relaySocket.log(`Couloir opened`, "info");
-
-      if (this.certService) {
-        // Already start the let's encrypt cert generation.
-        // We don't await it on purpose
-        this.certService.getCertOnDemand(host);
-      }
-
-      return { key: couloir.key, host };
-    });
-
-    relaySocket.onMessage(COULOIR_JOIN, (key) => {
-      const host = this.keyToHost[key];
-
-      if (host) {
-        this.couloirs[host].addHostSocket(relaySocket);
-      } else {
-        return {
-          error: "Invalid couloir key. Please restart your couloir client.",
-        };
-      }
-    });
-
-    relaySocket.onHead(({ headers }) => {
-      if (relaySocket.type === TYPE_HOST) {
-        return;
-      }
-      // This removes the potential port that is part of the Host but not of how couloirs
-      // are identified.
-      const host = headers["Host"]?.[0]?.replace(/:.*$/, "");
-      if (host && host === this.domain) {
-        let openedCouloirs = "";
-        if (Object.keys(this.couloirs).length) {
-          openedCouloirs = "\n  Open couloirs:\n";
-          for (const host of Object.keys(this.couloirs)) {
-            const hostUrl = new URL(`https://${host}:${relayPort}`);
-            if (http) {
-              hostUrl.protocol = "http";
-            }
-            openedCouloirs += `  - ${hostUrl}\n`;
-          }
-        }
-        socket.write(
-          htmlResponse(
-            headers,
-            logo(`\n\n  To open a new couloir, run:\n  > ${this.exposeCommand()}`) + openedCouloirs
-          )
-        );
-        socket.end();
-        return;
-      }
-      if (host && this.couloirs[host]) {
-        this.couloirs[host].addClientSocket(relaySocket);
-      } else {
-        socket.write(
-          htmlResponse(headers, logo(`404 - Couloir "${host}" is not open`, { center: true }), {
-            status: "404 Not found",
-          })
-        );
-        socket.end();
-      }
-    });
 
     const socketCleanup = () => {
       delete this.sockets[relaySocket.id];
@@ -157,7 +108,7 @@ export class RelayServer {
       if (relaySocket.couloir) {
         relaySocket.couloir.removeSocket(relaySocket);
       }
-    }
+    };
 
     socket.on("close", () => {
       relaySocket.log("disconnected");

@@ -46,7 +46,7 @@ export function parseResHead(head) {
 }
 
 export class HttpHeadParserTransform extends Transform {
-  constructor(socket, { label, transformHead = ({head}) => head } = {}) {
+  constructor(socket, { label, transformHead = ({ head }) => head } = {}) {
     super();
     this.label = label;
     this.socket = socket;
@@ -112,19 +112,23 @@ export function proxyHttp(
     onClientSocketEnd,
     transformResHead = ({ head }) => head,
     onServerSocketEnd,
-  }
+  },
 ) {
-  const requestHeadParser = new HttpHeadParserTransform(clientSocket, {label: "req",  transformHead: transformReqHead });
-  const responseHeadParser = new HttpHeadParserTransform(serverSocket, { label: "res",
+  const requestHeadParser = new HttpHeadParserTransform(clientSocket, {
+    label: "req",
+    transformHead: transformReqHead,
+  });
+  const responseHeadParser = new HttpHeadParserTransform(serverSocket, {
+    label: "res",
     transformHead: transformResHead,
   });
 
   // When multiple HTTP requests are sent consecutively through the same socket,
   // the easiest way to understand one side is completed is to detect when the other side starts.
   // For example, when the response is being sent it means the request is done and vice-versa.
-  requestHeadParser.onHead(() => responseHeadParser.reset())
+  requestHeadParser.onHead(() => responseHeadParser.reset());
   responseHeadParser.onHead(() => requestHeadParser.reset());
-  
+
   serverSocket.on("end", async () => {
     await onServerSocketEnd();
     responseHeadParser.end();
@@ -135,7 +139,6 @@ export function proxyHttp(
     requestHeadParser.end();
   });
 
-  
   clientStream.pipe(requestHeadParser, { end: false }).pipe(serverSocket);
 
   serverStream.pipe(responseHeadParser, { end: false }).pipe(clientSocket);

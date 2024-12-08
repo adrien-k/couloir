@@ -11,7 +11,6 @@ export default function relay({
   certsDirectory = "~/.couloir.certs",
   log = defaultLogger,
 }) {
-  
   let relay, certService;
   if (!http) {
     certService = createCertServer({
@@ -19,12 +18,9 @@ export default function relay({
       log,
       email,
       domain,
-      allowServername: (servername) => (
-        domain === servername ||
-        `couloir.${domain}` === servername ||
-        relay.couloirs[servername]
-      )
-    })
+      allowServername: (servername) =>
+        domain === servername || `couloir.${domain}` === servername || relay.couloirs[servername],
+    });
   }
 
   relay = new RelayServer({
@@ -46,8 +42,8 @@ export default function relay({
 
         await certService.start();
       }
-  
-      await relay.listen()
+
+      await relay.listen();
 
       log(`>>> Relay server started on port ${relayPort}`, "info");
       log(`>>> Run '${relay.exposeCommand()}' to open a new couloir`, "info");

@@ -32,7 +32,7 @@ export class CouloirProtocolInterceptor extends Transform {
             this.expectingAck = false;
             resolve(response && JSON.parse(response));
           },
-          { skipResponse: true }
+          { skipResponse: true },
         );
 
         this.socket.on("close", () => {
@@ -91,7 +91,7 @@ export class CouloirProtocolInterceptor extends Transform {
     if (this.expectingAck && rest.length) {
       this.log(
         "Unexpected response from the relay.\nPlease check that you are connecting to a Couloir relay server and that it runs the same version.",
-        "error"
+        "error",
       );
       process.exit(1);
     }
