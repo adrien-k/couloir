@@ -17,6 +17,10 @@ Temporarily expose a http local service to the Internet using your own server.
 
 _This is still an alpha version so do not use it for anything too serious._
 
+## Requirements
+
+Node 18.x or above.
+
 ## Installation
 
 On both the relay server and your local machine. Make sure both versions match.

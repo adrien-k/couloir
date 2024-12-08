@@ -7,27 +7,32 @@ import { proxyHttp, parseReqHead, parseResHead, serializeReqHead } from "../http
 
 export default class ExposeSocket extends CouloirClientSocket {
   constructor(socket, { log, localHost, localPort, overrideHost }) {
-    super(socket, { log });
+    super(socket);
     this.localHost = localHost;
     this.localPort = localPort;
     this.overrideHost = overrideHost;
+    this.originalLog = log;
+  }
+
+  log(message, level) {
+    const prefix = `[#${this.id}] `;
+    this.originalLog(`${prefix}${message}`, level);
   }
 
   static async create(exposeOptions) {
     const { relayIp, relayHost, relayPort, http } = exposeOptions;
+    const host = relayIp || relayHost;
+    const socket = http
+      ? net.createConnection({ host, port: relayPort })
+      : tls.connect({ host, port: relayPort, servername: relayHost });
 
-    const socket = await new Promise((resolve, reject) => {
-      const host = relayIp || relayHost;
-      const s = http
-        ? net.createConnection({ host, port: relayPort }, () => {
-            resolve(s);
-          })
-        : tls.connect({ host, port: relayPort, servername: relayHost }, () => resolve(s));
+    return new Promise((resolve, reject) => {
+      socket.on("connect", () => {
+        resolve(new ExposeSocket(socket, exposeOptions));
+      });
 
-      s.on("error", reject);
+      socket.on("error", reject);
     });
-
-    return new ExposeSocket(socket, exposeOptions);
   }
 
   async end() {
@@ -77,27 +82,27 @@ export default class ExposeSocket extends CouloirClientSocket {
               },
               onClientSocketEnd: async () => {
                 this.log("Relay socket closed. Closing local server socket.");
-                await beforeClose("relay");
+                await beforeClose();
               },
               onServerSocketEnd: async () => {
                 this.log("Local server socket closing which will in turn close the relay socket.");
-                await beforeClose("host");
+                await beforeClose();
               },
             });
-          },
+          }
         );
 
         this.localSocket.on("error", (err) => {
-          log("Unable to connect to local server.", "error");
-          log(err, "error");
-          clientSocketStream.write(
-            `HTTP/1.1 502 Bad Gateway\r\n\r\n502 - Unable to connect to your local server on ${this.localHost}:${this.localPort}`,
+          this.log("Unable to connect to local server.", "error");
+          this.log(err, "error");
+          this.socket.write(
+            `HTTP/1.1 502 Bad Gateway\r\n\r\n502 - Unable to connect to your local server on ${this.localHost}:${this.localPort}`
           );
-          clientSocketStream.end();
+          this.socket.end();
           return;
         });
       },
-      { skipResponse: true },
+      { skipResponse: true }
     );
 
     await this.sendMessage(COULOIR_JOIN, couloirKey);

@@ -32,7 +32,7 @@ export class CouloirProtocolInterceptor extends Transform {
             this.expectingAck = false;
             resolve(response && JSON.parse(response));
           },
-          { skipResponse: true },
+          { skipResponse: true }
         );
 
         this.socket.on("close", () => {
@@ -46,11 +46,11 @@ export class CouloirProtocolInterceptor extends Transform {
     }
 
     if (this.socket.writable) {
-      this.log(`Sending Couloir message: ${key} ${value}`);
       let msg = `${key}`;
-      if (value !== null) {
+      if (value !== null && value !== undefined) {
         msg += ` ${value}`;
       }
+      this.log(`Sending Couloir message: ${msg}`);
       this.socket.write(`${msg}${MESSAGE_SEPARATOR}`);
     }
 
@@ -59,7 +59,6 @@ export class CouloirProtocolInterceptor extends Transform {
 
   onMessage(key, handler, { skipResponse = false } = {}) {
     const handlerWithResponse = async (message) => {
-      this.log(`Received Couloir message: ${key} ${message}`);
       this.protocolEvents.off(key, handlerWithResponse);
 
       // Some handler need to send the message in the same event loop
@@ -84,6 +83,7 @@ export class CouloirProtocolInterceptor extends Transform {
       const message = rest.subarray(0, cutoff).toString();
       rest = rest.subarray(cutoff + 4);
 
+      this.log(`Received Couloir message: ${message}`);
       const { key, payload } = COULOIR_MATCHER.exec(message).groups;
       this.protocolEvents.emit(key, payload);
     }
@@ -91,7 +91,7 @@ export class CouloirProtocolInterceptor extends Transform {
     if (this.expectingAck && rest.length) {
       this.log(
         "Unexpected response from the relay.\nPlease check that you are connecting to a Couloir relay server and that it runs the same version.",
-        "error",
+        "error"
       );
       process.exit(1);
     }

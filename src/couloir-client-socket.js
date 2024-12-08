@@ -1,15 +1,13 @@
 import { CouloirProtocolInterceptor } from "./protocol.js";
-import { proxyHttp } from "./http.js";
 
 let socketId = 0;
 export default class CouloirClientSocket {
-  constructor(socket, { log }) {
+  constructor(socket) {
     this.id = ++socketId;
 
     this.socket = socket;
-    this.couloirProtocol = new CouloirProtocolInterceptor(socket, { log });
+    this.couloirProtocol = new CouloirProtocolInterceptor(socket, { log: this.log.bind(this) });
     this.stream = socket.pipe(this.couloirProtocol);
-    this.log = log;
   }
 
   onMessage(key, handler) {
@@ -27,10 +25,4 @@ export default class CouloirClientSocket {
   pipe(otherStream, options = {}) {
     return this.stream.pipe(otherStream, options);
   }
-
-  // For the couloir socket running on the Host/Expose side.
-  proxyTo(localSocket) {}
-
-  // For the couloir socket running on the Relay side.
-  proxyFrom(clientSocket) {}
 }

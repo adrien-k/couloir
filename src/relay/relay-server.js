@@ -1,12 +1,8 @@
 import net from "node:net";
 import tls from "node:tls";
 
-import { COULOIR_OPEN, COULOIR_JOIN } from "../protocol.js";
-import { htmlResponse } from "../http.js";
 import RelaySocket from "./relay-socket.js";
-import RelayCouloir, { TYPE_HOST } from "./relay-couloir.js";
-
-import logo from "../logo.js";
+import RelayCouloir from "./relay-couloir.js";
 
 export class RelayServer {
   constructor({ http, relayPort, log, verbose, domain, certService }) {
@@ -47,6 +43,8 @@ export class RelayServer {
   }
 
   async stop({ force = false } = {}) {
+    this.stopped = true;
+
     for (const socket of Object.values(this.sockets)) {
       await socket.end({ force });
     }
@@ -56,7 +54,9 @@ export class RelayServer {
   }
 
   removeCouloir(host) {
-    this.log("Closing couloir", "info");
+    this.log(`Closing couloir "${host}"`, "info");
+    this.couloirs[host].beforeClose();
+
     delete this.couloirs[host];
     for (const key of Object.keys(this.keyToHost)) {
       if (this.keyToHost[key] === host) {
@@ -79,7 +79,7 @@ export class RelayServer {
       throw new Error(`Couloir host ${host} is already opened`);
     }
 
-    const couloir = (this.couloirs[host] = new RelayCouloir(this, host, { log: this.log }));
+    const couloir = (this.couloirs[host] = new RelayCouloir(this, host));
     this.keyToHost[couloir.key] = host;
     this.log(`Couloir opened`, "info");
 
@@ -98,7 +98,12 @@ export class RelayServer {
   }
 
   #onSocket(socket) {
-    const relaySocket = new RelaySocket(this, socket, { log: this.log, verbose: this.verbose });
+    if (this.stopped) {
+      socket.end();
+      return;
+    }
+
+    const relaySocket = new RelaySocket(this, socket);
     this.sockets[relaySocket.id] = relaySocket;
     relaySocket.log(`New connection`);
 
