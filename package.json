@@ -15,6 +15,12 @@
   },
   "scripts": {
     "test": "NODE_EXTRA_CA_CERTS=./tests/certs/ca.pem node --test",
+    "lint": "eslint .",
     "test:only": "npm test -- --test-only"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.16.0",
+    "eslint": "^9.16.0",
+    "globals": "^15.13.0"
   }
 }

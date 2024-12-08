@@ -1,5 +1,5 @@
+- open next socket right after socket opening - don't wait for data as it could lead to starving the socket.
 - Password protection
 - mTLS experimentation
-- Check client / server version compatibility
 - command to generate wildcart cert with DNS challenge
 - cert expiration and renewal

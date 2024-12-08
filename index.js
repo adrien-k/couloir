@@ -9,8 +9,8 @@ const esRequire = createRequire(import.meta.url);
 const packageJson = esRequire("./package.json");
 
 import { loggerFactory, errorMessage } from "./src/logger.js";
-import relay from "./src/relay.js";
-import expose from "./src/expose.js";
+import relay from "./src/relay/index.js";
+import expose from "./src/expose/index.js";
 import logo from "./src/logo.js";
 
 const argvWithLog = (argv) => ({ ...argv, log: loggerFactory(argv) });
@@ -58,7 +58,7 @@ yargs(hideBin(process.argv))
     async (argv) => {
       console.log(logo(`Relay Server | Version ${packageJson.version}`, { center: true }));
       await relay(argvWithLog(argv)).start();
-    },
+    }
   )
   .command(
     "expose <local-port>",
@@ -99,7 +99,7 @@ yargs(hideBin(process.argv))
     async (argv) => {
       console.log(logo(`Host Server | Version ${packageJson.version}`, { center: true }));
       await expose(argvWithLog(argv)).start();
-    },
+    }
   )
   .option("verbose", {
     alias: "v",
