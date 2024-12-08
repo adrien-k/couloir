@@ -1,75 +1,104 @@
-const COULOIR_MATCHER = /^(COULOIR [A-Z]+) (.*)$/m;
+import { Transform } from "node:stream";
+import EventEmitter from "node:events";
+
+const COULOIR_MATCHER = /^(?<key>COULOIR [A-Z]+( ACK)?)( (?<payload>.*))?$/;
 const MESSAGE_SEPARATOR = "\r\n\r\n";
 
-export const OPEN_COULOIR = "COULOIR OPEN";
-export const JOIN_COULOIR = "COULOIR JOIN";
+export const COULOIR_OPEN = "COULOIR OPEN";
+export const COULOIR_JOIN = "COULOIR JOIN";
+export const COULOIR_STREAM = "COULOIR STREAM";
 
-export async function hostToRelayMessage(socket, key, value, log) {
-  log(`Sending Couloir message: ${key} ${value}`);
-  const ackKey = `${key} ACK`;
-
-  return new Promise((resolve, reject) => {
-    const onData = (data) => {
-      socket.off("data", onData);
-
-      if (data.indexOf(ackKey) === -1) {
-        reject(
-          new Error(
-            `Unexpected response from the relay.\nPlease check that you are connecting to a Couloir relay server and that it runs the same version.`,
-          ),
-        );
-      } else {
-        const endOfAck = data.indexOf(MESSAGE_SEPARATOR);
-        const couloirResponse = data.toString("utf8", 0, endOfAck);
-        log(`Receiving Couloir message: ${couloirResponse}`);
-        const response = JSON.parse(couloirResponse.slice(ackKey.length + 1));
-        const responseBuffer = data.subarray(endOfAck + MESSAGE_SEPARATOR.length);
-
-        if (response.error) {
-          socket.end();
-          reject(new Error(response.error));
-        }
-
-        resolve({ response, responseBuffer, socket });
-      }
-    };
-    socket.on("data", onData);
-
-    // Adding the trailing CRLF has a side-benefit of making other http servers respond
-    // with 400 rapidly if targetting a Host that is not a relay.
-    if (socket.writable) {
-      socket.write(`${key} ${value}${MESSAGE_SEPARATOR}`);
-    }
-
-    socket.on("close", () => {
-      if (!resolve) {
-        // This usually happens when the relay server is closed before the couloir was joined
-        // and is usually normal
-        log("Relay connection closed prematurely", "info");
-        process.exit(1);
-      }
-    });
-  });
-}
-
-export function onHostToRelayMessage(data, socket, log) {
-  if (data.indexOf("COULOIR") !== 0) {
-    return false;
+export class CouloirProtocolInterceptor extends Transform {
+  constructor(socket, { log }) {
+    super();
+    this.log = log;
+    this.socket = socket;
+    this.protocolEvents = new EventEmitter();
   }
 
-  const matchCouloirMessage = data.toString().match(COULOIR_MATCHER);
-  const [key, payload] = matchCouloirMessage.slice(1);
-  log(`Receiving ${key} ${payload}`);
+  ackKey(key) {
+    return `${key} ACK`;
+  }
 
-  const sendResponse = (response) => {
-    const jsonResponse = JSON.stringify(response);
-    const ack_key = `${key} ACK`;
+  sendMessage(key, value = null, { skipResponse = false } = {}) {
+    let responsePromise;
+    if (!skipResponse) {
+      responsePromise = new Promise((resolve, reject) => {
+        this.expectingAck = true;
 
-    log(`Sending Couloir message ${ack_key} ${jsonResponse}`);
-    if (socket.writable) {
-      // not writable when closing relay for example.
-      socket.write(`${ack_key} ${jsonResponse}${MESSAGE_SEPARATOR}`);
+        this.onMessage(
+          this.ackKey(key),
+          (response) => {
+            this.expectingAck = false;
+            resolve(response && JSON.parse(response));
+          },
+          { skipResponse: true }
+        );
+
+        this.socket.on("close", () => {
+          if (this.expectingAck) {
+            // This usually happens when the relay server is closed before the couloir was
+            // completly joins (mostly in tests)
+            reject("Relay connection closed prematurely", "info");
+          }
+        });
+      });
     }
-  };
-  return { key, payload, sendResponse };
+
+    if (this.socket.writable) {
+      let msg = `${key}`;
+      if (value !== null && value !== undefined) {
+        msg += ` ${value}`;
+      }
+      this.log(`Sending Couloir message: ${msg}`);
+      this.socket.write(`${msg}${MESSAGE_SEPARATOR}`);
+    }
+
+    return responsePromise;
+  }
+
+  onMessage(key, handler, { skipResponse = false } = {}) {
+    const handlerWithResponse = async (message) => {
+      this.protocolEvents.off(key, handlerWithResponse);
+
+      // Some handler need to send the message in the same event loop
+      // cycle to ensure a correct message order. (ex COULOIR JOIN ACK
+      // and then COULOIR STREAM)
+      let response = handler(message);
+      if (!skipResponse) {
+        if (response instanceof Promise) {
+          response = await response;
+        }
+        const jsonResponse = JSON.stringify(response);
+        this.sendMessage(this.ackKey(key), jsonResponse, { skipResponse: true });
+      }
+    };
+    this.protocolEvents.on(key, handlerWithResponse);
+  }
+
+  _transform(chunk, _encoding, callback) {
+    let rest = chunk;
+    while (rest.indexOf("COULOIR") === 0) {
+      const cutoff = rest.indexOf(MESSAGE_SEPARATOR);
+      const message = rest.subarray(0, cutoff).toString();
+      rest = rest.subarray(cutoff + 4);
+
+      this.log(`Received Couloir message: ${message}`);
+      const { key, payload } = COULOIR_MATCHER.exec(message).groups;
+      this.protocolEvents.emit(key, payload);
+    }
+
+    if (this.expectingAck && rest.length) {
+      this.log(
+        "Unexpected response from the relay.\nPlease check that you are connecting to a Couloir relay server and that it runs the same version.",
+        "error"
+      );
+      process.exit(1);
+    }
+
+    if (rest.length) {
+      this.push(rest);
+    }
+    callback();
+  }
 }
