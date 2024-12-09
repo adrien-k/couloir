@@ -19,7 +19,11 @@ const centerFn =
     return " ".repeat(Math.max(0, space)) + text;
   };
 
-export default function logo(subtitle, { center = false } = {}) {
+export default function logo(subtitle, { center = false, stdout = false } = {}) {
+  if (stdout && process.stdout.columns < newLine.length) {
+    return `\n===== Couloir =====\n\n${subtitle}\n\n====================\n`;
+  }
+
   const maxLogoWidth = Math.max(...asciiLogo.split("\n").map((l) => l.length));
   const align = center ? centerFn(newLine.length) : (text) => text;
   return (
