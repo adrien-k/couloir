@@ -56,7 +56,7 @@ yargs(hideBin(process.argv))
         });
     },
     async (argv) => {
-      console.log(logo(`Relay Server | Version ${packageJson.version}`, { center: true }));
+      console.log(logo(`Relay Server | Version ${packageJson.version}`, {stdout: true, center: true }));
       await relay(argvWithLog(argv)).start();
     }
   )
@@ -97,7 +97,7 @@ yargs(hideBin(process.argv))
           default: false,
         }),
     async (argv) => {
-      console.log(logo(`Host Server | Version ${packageJson.version}`, { center: true }));
+      console.log(logo(`Host Server | Version ${packageJson.version}`, { stdout: true, center: true }));
       await expose(argvWithLog(argv)).start();
     }
   )
