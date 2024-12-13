@@ -3,16 +3,17 @@ import tls from "node:tls";
 
 import RelaySocket from "./relay-socket.js";
 import RelayCouloir from "./relay-couloir.js";
+import version, { equalVersions } from "../version.js";
 
 export class RelayServer {
-  constructor({ http, relayPort, log, verbose, domain, certService }) {
+  constructor({ http, relayPort, log, verbose, domain, certService, password }) {
     this.http = http;
     this.relayPort = relayPort;
     this.log = log;
     this.verbose = verbose;
     this.domain = domain;
     this.certService = certService;
-
+    this.password = password;
     this.couloirs = {};
     this.sockets = {};
     this.keyToHost = {};
@@ -25,6 +26,9 @@ export class RelayServer {
     }
     if (this.http ? this.relayPort !== 80 : this.relayPort !== 443) {
       exposeCmd += ` --relay-port ${this.relayPort}`;
+    }
+    if (this.password) {
+      exposeCmd += ` --password <relay password>`;
     }
     return exposeCmd;
   }
@@ -65,7 +69,13 @@ export class RelayServer {
     }
   }
 
-  openCouloir(host) {
+  openCouloir({ host, password, version: clientVersion}) {
+    if (clientVersion && !equalVersions(clientVersion, version, "minor")) {
+      throw new Error(
+        `Client version (${clientVersion}) is not compatible with server version (${version}).`
+      );
+    }
+
     if (!host.endsWith(`.${this.domain}`)) {
       host = `couloir.${this.domain}`;
       let counter = 0;
@@ -73,6 +83,10 @@ export class RelayServer {
         counter++;
         host = `couloir${counter}.${this.domain}`;
       }
+    }
+
+    if (this.password && password !== this.password) {
+      throw new Error(password ? "Invalid Relay password." : "This Relay require a password. Use the --password <password> option.");
     }
 
     if (this.couloirs[host]) {
