@@ -87,22 +87,10 @@ export default class RelaySocket extends CouloirClientSocket {
       // are identified.
       const host = headers["Host"]?.[0]?.replace(/:.*$/, "");
       if (host && host === this.relay.domain) {
-        let openedCouloirs = "";
-        if (Object.keys(this.relay.couloirs).length) {
-          openedCouloirs = "\n  Open couloirs:\n";
-          for (const host of Object.keys(this.relay.couloirs)) {
-            const hostUrl = new URL(`https://${host}:${this.relay.relayPort}`);
-            if (this.relay.http) {
-              hostUrl.protocol = "http";
-            }
-            openedCouloirs += `  - ${hostUrl}\n`;
-          }
-        }
         this.socket.write(
           htmlResponse(
             headers,
-            logo(`\n\n  To open a new couloir, run:\n  > ${this.relay.exposeCommand()}`) +
-              openedCouloirs
+            logo(`\n\n  To open a new couloir, run:\n  > ${this.relay.exposeCommand()}`)
           )
         );
         this.socket.end();
