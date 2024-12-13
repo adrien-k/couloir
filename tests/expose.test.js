@@ -15,8 +15,15 @@ const LOCAL_PORT = 30021;
 const BINARY_BODY = Buffer.from([0x80]); // non-utf8 character for fun
 
 // leave some loops for async calls to flow through
-function letTheBitsFlow() {
-  return new Promise((resolve) => setTimeout(resolve, 25));
+async function waitUntil(condition, tries = 1) {
+  try {
+    condition()
+  } catch(e) {
+    if (tries >= 10) {
+      throw e
+    }
+    return new Promise((resolve, reject) => setTimeout(() => waitUntil(condition, tries + 1).then( resolve, reject), 20));
+  }
 }
 
 function assertHttpEqual(req, head, body) {
@@ -162,23 +169,21 @@ it("can handle multiple sockets in series when reaching max maxConcurrency", asy
     let responses = [];
     [0, 1].forEach(() => sendRelayRequest(httpRequest).then((res) => responses.push(res)));
 
-    await letTheBitsFlow();
+    await waitUntil(() => assert.equal(localSockets.length, 1));
 
     assert.equal(localSockets.length, 1);
     assert(!responses.length);
     localSockets[0].end(httpResponse);
     localSockets[0].destroy();
 
-    await letTheBitsFlow();
+    await waitUntil(() => assert.equal(responses.length, 1));
 
-    assert.equal(responses.length, 1);
     assert.equal(localSockets.length, 2);
     localSockets[1].end(httpResponse);
     localSockets[1].destroy();
 
-    await letTheBitsFlow();
+    await waitUntil(() => assert.equal(responses.length, 2));
 
-    assert.equal(responses.length, 2);
     for (const response of responses) {
       assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
     }
@@ -201,18 +206,16 @@ it("can handle multiple sockets in parallel", async () => {
     let responses = [];
     [0, 1].forEach(() => sendRelayRequest(httpRequest).then((res) => responses.push(res)));
 
-    await letTheBitsFlow();
+    await waitUntil(() => assert.equal(localSockets.length, 2));
 
-    assert.equal(localSockets.length, 2);
     assert(!responses.length);
     localSockets.forEach((s) => {
       s.end(httpResponse);
       s.destroy();
     });
 
-    await letTheBitsFlow();
+    await waitUntil(() => assert.equal(responses.length, 2));
 
-    assert.equal(responses.length, 2);
     for (const response of responses) {
       assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar");
     }
@@ -247,23 +250,24 @@ it("can serve websockets", async () => {
     const relaySocket = await createRelayConnection();
     relaySocket.write(httpRequest);
     relaySocket.on("data", (data) => clientChunks.push(data));
-    await letTheBitsFlow();
+    
+    await waitUntil(() => assert.equal(serverChunks.length, 1));
 
-    assert.equal(serverChunks.length, 1);
     localSocket.write(httpResponse);
-    await letTheBitsFlow();
 
-    assert.equal(clientChunks.length, 1);
+    await waitUntil(() => assert.equal(clientChunks.length, 1));
+
     assert.equal(clientChunks[0].subarray(0, 12).toString(), "HTTP/1.1 101");
+    
     relaySocket.write("hello");
     localSocket.write("world");
 
-    await letTheBitsFlow();
+    await waitUntil(() => assert.equal(serverChunks.length, 1));
+    await waitUntil(() => assert.equal(clientChunks.length, 2));
 
     localSocket.write("foo");
 
-    await letTheBitsFlow();
-
+    await waitUntil(() => assert.equal(clientChunks.length, 3));
     assert.equal(serverChunks[1].toString(), "hello");
     assert.equal(clientChunks[1].toString(), "world");
     assert.equal(clientChunks[2].toString(), "foo");
@@ -359,9 +363,9 @@ it("should not close the couloir when closing the last client socket", async () 
     });
 
     assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
-
-    await letTheBitsFlow();
-
+    
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    
     // Check that the couloir is still opened
     assert.equal(
       (await sendRelayRequest(httpRequest)).toString(),
