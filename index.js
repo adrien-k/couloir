@@ -2,18 +2,14 @@
 
 import yargs from "yargs/yargs";
 import { hideBin } from "yargs/helpers";
+import version from "./src/version.js";
 
-import { createRequire } from "module";
-
-const esRequire = createRequire(import.meta.url);
-const packageJson = esRequire("./package.json");
 
 import { loggerFactory, errorMessage } from "./src/logger.js";
 import relay from "./src/relay/index.js";
 import expose from "./src/expose/index.js";
 import logo from "./src/logo.js";
 
-const argvWithLog = (argv) => ({ ...argv, log: loggerFactory(argv) });
 
 yargs(hideBin(process.argv))
   .scriptName("couloir")
@@ -24,7 +20,7 @@ yargs(hideBin(process.argv))
     log: loggerFactory(argv),
   }))
   .command("version", "Show the current version", () => {
-    console.log(packageJson.version);
+    console.log(version);
   })
   .command(
     "relay <domain>",
@@ -50,14 +46,21 @@ yargs(hideBin(process.argv))
             "Directory where to read and write Let's encrypt certs. Start with './' for paths relative to current directory.",
           default: "~/.couloir/certs",
         })
+        .options("password", {
+          describe: "Require a password to access the relay.",
+          type: "string",
+        })
         .option("email", {
           describe: "Email used for Let's Encrypt cert generation",
           default: "test@example.com",
         });
     },
     async (argv) => {
-      console.log(logo(`Relay Server | Version ${packageJson.version}`, {stdout: true, center: true }));
-      await relay(argvWithLog(argv)).start();
+      console.log(logo(`Relay Server | Version ${version}`, {stdout: true, center: true }));
+      if (argv.password && argv.http) {
+        console.warn("Warning: password protection is not recommended in HTTP-only mode as the password will be sent in plain text to the relay. Use with caution.\n");
+      }
+      await relay(argv).start();
     }
   )
   .command(
@@ -95,10 +98,14 @@ yargs(hideBin(process.argv))
           describe: "Must be enabled to connect to a relay running in HTTP mode.",
           type: "boolean",
           default: false,
+        })
+        .options("password", {
+          describe: "Password to access the relay, if required.",
+          type: "string",
         }),
     async (argv) => {
-      console.log(logo(`Host Server | Version ${packageJson.version}`, { stdout: true, center: true }));
-      await expose(argvWithLog(argv)).start();
+      console.log(logo(`Host Server | Version ${version}`, { stdout: true, center: true }));
+      await expose(argv).start();
     }
   )
   .option("verbose", {

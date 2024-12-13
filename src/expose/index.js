@@ -1,6 +1,7 @@
 import { COULOIR_OPEN } from "../protocol.js";
 import { loggerFactory } from "../logger.js";
 import ExposeSocket from "./expose-socket.js";
+import version from "../version.js";
 
 // This defines the number of concurrent socket connections opened with the relay
 // which in turn allows the relay to serve as many requests simultaneously.
@@ -18,6 +19,7 @@ export default function expose(exposeOptions) {
     relayPort = 443,
     maxConcurrency = DEFAULT_MAX_CONCURRENCY,
     http = false,
+    password,
     log = loggerFactory(),
   } = exposeOptions;
 
@@ -78,8 +80,7 @@ export default function expose(exposeOptions) {
       requestedCouloirHost = `${name}.${relayHost}`;
     }
     const socket = await ExposeSocket.create(exposeOptions);
-    const { host, key } = await socket.sendMessage(COULOIR_OPEN, requestedCouloirHost);
-
+    const { host, key } = await socket.couloirProtocol.sendMessage(COULOIR_OPEN, { version, host: requestedCouloirHost, password });
     activeSockets[socket.id] = socket;
     await joinCouloir(socket, key);
 

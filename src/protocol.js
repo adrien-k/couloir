@@ -1,12 +1,13 @@
 import { Transform } from "node:stream";
 import EventEmitter from "node:events";
 
-const COULOIR_MATCHER = /^(?<key>COULOIR [A-Z]+( ACK)?)( (?<payload>.*))?$/;
+const COULOIR_MATCHER = /^(?<key>COULOIR[ _][A-Z]+( ACK)?)( (?<payload>.*))?$/;
 const MESSAGE_SEPARATOR = "\r\n\r\n";
 
-export const COULOIR_OPEN = "COULOIR OPEN";
-export const COULOIR_JOIN = "COULOIR JOIN";
-export const COULOIR_STREAM = "COULOIR STREAM";
+const COULOIR_MESSAGE_FIRST_BYTES = "COULOIR"
+export const COULOIR_OPEN = "COULOIR_OPEN";
+export const COULOIR_JOIN = "COULOIR_JOIN";
+export const COULOIR_STREAM = "COULOIR_STREAM";
 
 export class CouloirProtocolInterceptor extends Transform {
   constructor(socket, { log }) {
@@ -30,7 +31,11 @@ export class CouloirProtocolInterceptor extends Transform {
           this.ackKey(key),
           (response) => {
             this.expectingAck = false;
-            resolve(response && JSON.parse(response));
+            if (response?.error) {
+              reject(new Error(response.error));
+            } else {
+              resolve(response);
+            }
           },
           { skipResponse: true }
         );
@@ -47,9 +52,7 @@ export class CouloirProtocolInterceptor extends Transform {
 
     if (this.socket.writable) {
       let msg = `${key}`;
-      if (value !== null && value !== undefined) {
-        msg += ` ${value}`;
-      }
+      msg += ` ${JSON.stringify(value)}`;
       this.log(`Sending Couloir message: ${msg}`);
       this.socket.write(`${msg}${MESSAGE_SEPARATOR}`);
     }
@@ -58,14 +61,14 @@ export class CouloirProtocolInterceptor extends Transform {
   }
 
   onMessage(key, handler, { skipResponse = false } = {}) {
-    const handlerWithResponse = async (message) => {
+    const handlerWithResponse = async (messageRaw) => {
       this.protocolEvents.off(key, handlerWithResponse);
-
+      const message = messageRaw && JSON.parse(messageRaw);
       let responseSent = false;
       const sendResponseOnce = (response) => {
         if (!responseSent && !skipResponse) {
           responseSent = true;
-          this.sendMessage(this.ackKey(key), JSON.stringify(response), { skipResponse: true });
+          this.sendMessage(this.ackKey(key), response, { skipResponse: true });
         }
       };
       const response = await handler(message, sendResponseOnce);
@@ -76,7 +79,7 @@ export class CouloirProtocolInterceptor extends Transform {
 
   _transform(chunk, _encoding, callback) {
     let rest = chunk;
-    while (rest.indexOf("COULOIR") === 0) {
+    while (rest.indexOf(COULOIR_MESSAGE_FIRST_BYTES) === 0) {
       const cutoff = rest.indexOf(MESSAGE_SEPARATOR);
       const message = rest.subarray(0, cutoff).toString();
       rest = rest.subarray(cutoff + 4);

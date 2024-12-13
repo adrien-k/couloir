@@ -1,4 +1,4 @@
-import { it, beforeEach } from "node:test";
+import { it, beforeEach, describe } from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
 import tls from "node:tls";
@@ -68,7 +68,7 @@ beforeEach(() => {
   };
 });
 
-async function setup(
+let setup = async (
   {
     httpResponse = () => `HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar${responseCounter++}`,
     keepAlive = false,
@@ -85,7 +85,7 @@ async function setup(
     },
   },
   testFn
-) {
+) => {
   const relayServer = relay(relayConfig);
   const localServer = net.createServer(onLocalConnection);
   const exposeServer = expose(exposeConfig);
@@ -121,8 +121,9 @@ async function createRelayConnection() {
     socket.on("error", reject);
   });
 }
+const DEFAULT_REQUEST = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo";
 
-async function sendRelayRequest(httpRequest, { socket } = {}) {
+async function sendRelayRequest(httpRequest = DEFAULT_REQUEST, { socket } = {}) {
   socket = socket || (await createRelayConnection());
   return new Promise((resolve) => {
     const onData = (data) => {
@@ -307,6 +308,54 @@ it("can handle multiple requests in the same socket", async () => {
   });
 });
 
+describe("can protect the relay with a password", () => {
+  beforeEach(() => {
+    relayConfig.password = "foo"
+  })
+
+  
+  it("reject when no password", async () => {
+    const relayServer = relay(relayConfig);
+    const exposeServer = expose(exposeConfig);
+  
+    await relayServer.start();
+    try {
+      await exposeServer.start();
+      assert.fail("Should throw an error");
+    } catch(e) {
+      assert.equal(e.message, "This Relay require a password. Use the --password <password> option.");
+    }
+    await relayServer.stop();
+  })
+
+  it("reject when bad password", async () => {
+    exposeConfig.password = "bar"
+    const relayServer = relay(relayConfig);
+    const exposeServer = expose(exposeConfig);
+  
+    await relayServer.start();
+    try {
+      await exposeServer.start();
+      assert.fail("Should throw an error");
+    } catch(e) {
+      assert.equal(e.message, "Invalid Relay password.");
+    }
+    await relayServer.stop();
+  })
+
+  it("starts when good password", async () => {
+    exposeConfig.password = "foo"
+    const relayServer = relay(relayConfig);
+    const exposeServer = expose(exposeConfig);
+  
+    await relayServer.start();
+    await exposeServer.start();
+
+    await relayServer.stop();
+    await exposeServer.stop();
+  })
+});
+
 it("can work over TLS", async () => {
   relayConfig.http = false;
   exposeConfig.http = false;
@@ -333,22 +382,18 @@ it("can work over TLS", async () => {
 });
 
 it("closes the couloir when stopping the host", async () => {
-  const httpRequest = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo";
-
   await setup({ keepAlive: true }, async ({ exposeServer }) => {
     assert.equal(
-      (await sendRelayRequest(httpRequest)).toString(),
+      (await sendRelayRequest()).toString(),
       "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1"
     );
 
     await exposeServer.stop();
-    assert.equal((await sendRelayRequest(httpRequest)).subarray(0, 12).toString(), "HTTP/1.1 404");
+    assert.equal((await sendRelayRequest()).subarray(0, 12).toString(), "HTTP/1.1 404");
   });
 });
 
 it("should not close the couloir when closing the last client socket", async () => {
-  const httpRequest = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo";
-
   await setup({ keepAlive: true }, async () => {
     const response = await new Promise((resolve, reject) => {
       const socket = net.createConnection({ port: RELAY_PORT }, () => {
@@ -357,7 +402,7 @@ it("should not close the couloir when closing the last client socket", async () 
           socket.end(); // <------ this is the the important change + keepAlive: true
           //         meaning the client closes the socket while the server was keeping it open.
         });
-        socket.write(httpRequest);
+        socket.write(DEFAULT_REQUEST);
       });
       socket.on("error", reject);
     });
@@ -368,18 +413,16 @@ it("should not close the couloir when closing the last client socket", async () 
     
     // Check that the couloir is still opened
     assert.equal(
-      (await sendRelayRequest(httpRequest)).toString(),
+      (await sendRelayRequest()).toString(),
       "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2"
     );
   });
 });
 
 it("closes the expose proxy when stopping the relay", async () => {
-  const httpRequest = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo";
-
   await setup({ keepAlive: true }, async ({ exposeServer, relayServer }) => {
     assert.equal(
-      (await sendRelayRequest(httpRequest)).toString(),
+      (await sendRelayRequest()).toString(),
       "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1"
     );
     assert.equal(Object.keys(exposeServer.activeSockets).length, 1);
@@ -389,16 +432,14 @@ it("closes the expose proxy when stopping the relay", async () => {
 });
 
 it("returns 502 when closing local server", async () => {
-  const httpRequest = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo";
-
   await setup({}, async ({ localServer }) => {
     assert.equal(
-      (await sendRelayRequest(httpRequest)).toString(),
+      (await sendRelayRequest()).toString(),
       "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1"
     );
     await new Promise((r) => localServer.close(r));
     assert.equal(
-      (await sendRelayRequest(httpRequest)).subarray(0, 24).toString(),
+      (await sendRelayRequest()).subarray(0, 24).toString(),
       "HTTP/1.1 502 Bad Gateway"
     );
   });

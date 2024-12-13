@@ -54,10 +54,9 @@ export default class RelaySocket extends CouloirClientSocket {
   }
 
   #listen() {
-    this.onMessage(COULOIR_OPEN, (hostRequest) => {
-      this.type = TYPE_HOST;
+    this.onMessage(COULOIR_OPEN, (payload) => {
       try {
-        const couloir = this.relay.openCouloir(hostRequest);
+        const couloir = this.relay.openCouloir(payload);
         this.host = couloir.host;
         return { key: couloir.key, host: couloir.host };
       } catch (e) {
@@ -65,8 +64,8 @@ export default class RelaySocket extends CouloirClientSocket {
       }
     });
 
-    this.onMessage(COULOIR_JOIN, (key, sendResponse) => {
-      const couloir = this.relay.getCouloir(key);
+    this.onMessage(COULOIR_JOIN, (payload, sendResponse) => {
+      const couloir = this.relay.getCouloir(payload.key);
 
       if (couloir) {
         // Send the ACK already to ensure it goes out before the stream starts

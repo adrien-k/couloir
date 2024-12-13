@@ -71,6 +71,21 @@ This will expose `my-service.sub.domain.com`:
 couloir expose 3000 --on sub.domain.com --name "my-service"
 ```
 
+### Protect your Relay with a password
+
+You may want to require a password to use your relay as a proxy.
+
+_Warning: using that option in combination with HTTP-only mode is not recommended as it results in the password
+being transmitted in clear over the TCP Socket._
+
+```sh
+# On the relay
+couloir relay sub.domain.com --email your@email.com --password foo
+
+# On your local machine
+couloir expose 3000 --on sub.domain.com --name "my-service"
+```
+
 ### HTTP-only mode
 
 In this mode, you only need the relay port to be accessible from Internet (80 by default in HTTP mode).
@@ -79,7 +94,7 @@ In this mode, you only need the relay port to be accessible from Internet (80 by
 # On the relay
 couloir relay sub.domain.com --http
 
-# On the local machine
+# On your local machine
 couloir expose 3000 --on sub.domain.com --http
 ```
 
@@ -94,7 +109,7 @@ For example, port 3000:
 # On the relay
 couloir relay sub.domain.com --port 3000
 
-# On the local machine
+# On your local machine
 couloir expose 3000 --on sub.domain.com --relay-port 3000
 ```
 
@@ -103,7 +118,7 @@ couloir expose 3000 --on sub.domain.com --relay-port 3000
 This is useful if your local server is expecting a Host like 127.0.0.1:3000. For example:
 
 ```sh
-# On the local machine
+# On your local machine
 couloir expose 3000 --on sub.domain.com --override-host 127.0.0.1
 ```
 

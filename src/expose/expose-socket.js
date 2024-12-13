@@ -128,7 +128,7 @@ export default class ExposeSocket extends CouloirClientSocket {
       { skipResponse: true }
     );
 
-    await this.sendMessage(COULOIR_JOIN, couloirKey);
+    await this.sendMessage(COULOIR_JOIN, { key: couloirKey });
     this.joined = true;
   }
 }

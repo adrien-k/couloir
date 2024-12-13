@@ -9,6 +9,7 @@ export default function relay({
   http = false,
   email = "test@example.com",
   certsDirectory = "~/.couloir.certs",
+  password,
   log = loggerFactory(),
 }) {
   let relay, certService;
@@ -30,6 +31,7 @@ export default function relay({
     verbose,
     domain,
     certService,
+    password,
   });
 
   return {
