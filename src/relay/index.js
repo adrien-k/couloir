@@ -1,6 +1,8 @@
 import { createCertServer } from "../certs.js";
 import { loggerFactory } from "../logger.js";
 import { RelayServer } from "./relay-server.js";
+import { CONFIG_DIR } from "../config.js";
+import { join } from "node:path";
 
 export default function relay({
   verbose,
@@ -8,7 +10,7 @@ export default function relay({
   domain,
   http = false,
   email = "test@example.com",
-  certsDirectory = "~/.couloir.certs",
+  certsDirectory = join(CONFIG_DIR, "certs"),
   password,
   log = loggerFactory(),
 }) {
@@ -40,7 +42,7 @@ export default function relay({
         // Already prepare a few certs cert for the main domain and first couloir
         // We don't wait for those requests to complete
         certService.getCertOnDemand(domain);
-        certService.getCertOnDemand(`couloir.${domain}`);
+        certService.getCertOnDemand(`${relay.hostPrefix}.${domain}`);
 
         await certService.start();
       }

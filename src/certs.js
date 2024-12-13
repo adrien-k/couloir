@@ -65,8 +65,8 @@ async function saveCertificate(certsDirectory, servername, key, cert) {
   await writeFile(join(certDirectory, "cert.pem"), cert);
 }
 
-async function createClient(absoluteCertsDirectory) {
-  const accountKey = await findOrCreateKey(absoluteCertsDirectory);
+async function createClient(certsDirectory) {
+  const accountKey = await findOrCreateKey(certsDirectory);
   return new acme.Client({
     directoryUrl: acme.directory.letsencrypt.production,
     accountKey,
@@ -81,14 +81,10 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
   const originalLog = log;
   log = (msg, level) => originalLog(`[Cert] ${msg}`, level);
 
-  const absoluteCertsDirectory = certsDirectory
-    .replace("~", os.homedir())
-    .replace(/^\./, process.cwd());
-
   const pendingDomains = {};
   const challengeResponses = {};
 
-  const certsPromise = loadCertificates(absoluteCertsDirectory);
+  const certsPromise = loadCertificates(certsDirectory);
 
   /**
    * On-demand certificate generation using http-01
@@ -110,7 +106,7 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
     }
 
     if (!client) {
-      client = await createClient(absoluteCertsDirectory);
+      client = await createClient(certsDirectory);
     }
 
     /* Waiting on certificate order to go through */
@@ -151,7 +147,7 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
     /* Done, store certificate */
     log(`Certificate for ${servername} created successfully`, "info");
     certificateStore[servername] = [key, cert];
-    await saveCertificate(absoluteCertsDirectory, servername, key, cert);
+    await saveCertificate(certsDirectory, servername, key, cert);
     delete pendingDomains[servername];
     return [key, cert];
   }

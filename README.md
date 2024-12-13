@@ -55,7 +55,7 @@ couloir relay sub.domain.com --email your@email.com
 2. Run the local Couloir proxy:
 
 ```sh
-couloir expose 3000 --on sub.domain.com
+couloir 3000 --on sub.domain.com
 ```
 
 3. Open `https://couloir.sub.domain.com`
@@ -65,25 +65,40 @@ couloir expose 3000 --on sub.domain.com
 ### Custom Couloir subdomain
 
 You may want to choose your own subdomain name instead of "couloir".
-This will expose `my-service.sub.domain.com`:
+This will expose `bonjour.sub.domain.com`:
 
 ```sh
-couloir expose 3000 --on sub.domain.com --name "my-service"
+couloir 3000 --on sub.domain.com --as bonjour
 ```
 
-### Protect your Relay with a password
+### Protect the Relay with a password
 
-You may want to require a password to use your relay as a proxy.
+You may want to require a password to use your relay as a Couloir proxy.
 
 _Warning: using that option in combination with HTTP-only mode is not recommended as it results in the password
 being transmitted in clear over the TCP Socket._
 
 ```sh
 # On the relay
-couloir relay sub.domain.com --email your@email.com --password foo
+couloir relay sub.domain.com --email your@email.com --password foobar
 
 # On your local machine
-couloir expose 3000 --on sub.domain.com --name "my-service"
+couloir 3000 --on sub.domain.com --password foobar
+```
+
+### Persist your relay settings for shorter commands.
+
+Once you have configured a Relay you can save its configuration to not repeat it on every new couloir.
+
+```sh
+# On your local machine
+couloir set relay-host sub.domain.com
+couloir set password foobar
+```
+
+Then, you can simply open a couloir with:
+```sh
+couloir 3000
 ```
 
 ### HTTP-only mode
@@ -95,7 +110,7 @@ In this mode, you only need the relay port to be accessible from Internet (80 by
 couloir relay sub.domain.com --http
 
 # On your local machine
-couloir expose 3000 --on sub.domain.com --http
+couloir 3000 --on sub.domain.com --http
 ```
 
 ### Run the relay on a different port
@@ -110,7 +125,7 @@ For example, port 3000:
 couloir relay sub.domain.com --port 3000
 
 # On your local machine
-couloir expose 3000 --on sub.domain.com --relay-port 3000
+couloir 3000 --on sub.domain.com --relay-port 3000
 ```
 
 ### Override the host header passed to your local server
@@ -119,7 +134,7 @@ This is useful if your local server is expecting a Host like 127.0.0.1:3000. For
 
 ```sh
 # On your local machine
-couloir expose 3000 --on sub.domain.com --override-host 127.0.0.1
+couloir 3000 --on sub.domain.com --override-host 127.0.0.1:3000
 ```
 
 ### Run the relay as a daemon with pm2

@@ -4,22 +4,25 @@ import yargs from "yargs/yargs";
 import { hideBin } from "yargs/helpers";
 import version from "./src/version.js";
 
-
 import { loggerFactory, errorMessage } from "./src/logger.js";
 import relay from "./src/relay/index.js";
 import expose from "./src/expose/index.js";
 import logo from "./src/logo.js";
-
+import { settings, saveSetting } from "./src/config.js";
 
 yargs(hideBin(process.argv))
   .scriptName("couloir")
   .version(false)
   .middleware((argv) => ({
+    ...settings,
+    ...argv
+  }))
+  .middleware((argv) => ({
     ...argv,
     relayPort: argv.relayPort || (argv.http ? 80 : 443),
     log: loggerFactory(argv),
   }))
-  .command("version", "Show the current version", () => {
+  .command("version", "Show the current version\n", () => {
     console.log(version);
   })
   .command(
@@ -41,31 +44,28 @@ yargs(hideBin(process.argv))
           type: "boolean",
           default: false,
         })
-        .option("certs-directory", {
-          describe:
-            "Directory where to read and write Let's encrypt certs. Start with './' for paths relative to current directory.",
-          default: "~/.couloir/certs",
-        })
         .options("password", {
-          describe: "Require a password to access the relay.",
+          describe: `Require a password to access the relay.${settings['password'] ?"\n[default: <hidden>]" :''}`,
           type: "string",
         })
         .option("email", {
           describe: "Email used for Let's Encrypt cert generation",
-          default: "test@example.com",
+          default: settings['email'] || "test@example.com",
         });
     },
     async (argv) => {
-      console.log(logo(`Relay Server | Version ${version}`, {stdout: true, center: true }));
+      console.log(logo(`Relay Server | Version ${version}`, { stdout: true, center: true }));
       if (argv.password && argv.http) {
-        console.warn("Warning: password protection is not recommended in HTTP-only mode as the password will be sent in plain text to the relay. Use with caution.\n");
+        console.warn(
+          "Warning: password protection is not recommended in HTTP-only mode as the password will be sent in plain text to the relay. Use with caution.\n"
+        );
       }
       await relay(argv).start();
     }
   )
   .command(
-    "expose <local-port>",
-    "Expose the given local port on the given remote hostname",
+    ["expose <local-port>", "$0 <local-port>"],
+    "Expose the given local port on the given remote hostname.\n",
     (yargs) =>
       yargs
         .positional("local-port", {
@@ -78,6 +78,7 @@ yargs(hideBin(process.argv))
           describe: "Hostname of the relay server.",
         })
         .option("name", {
+          alias: "as",
           describe: "Name for the couloir subdomain. By default it will be couloir.<relay-host>.",
         })
         .option("relay-port", {
@@ -100,12 +101,26 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: "Password to access the relay, if required.",
+          describe: `Password to access the relay, if required.${settings['password'] ?"\n[default: <hidden>]" :''}`,
           type: "string",
         }),
     async (argv) => {
       console.log(logo(`Host Server | Version ${version}`, { stdout: true, center: true }));
       await expose(argv).start();
+    }
+  )
+  .command(
+    "set <config> [value]",
+    "Set default values for the `relay-host`, `relay-port` and `password` values",
+    (yargs) =>
+      yargs.positional("config", {
+        describe: "Setting to persist",
+      }).positional("value", {
+        describe: "Value to persist for the setting. Providing no value will clear the setting.",
+      }),
+    async (argv) => {
+      saveSetting(argv.config, argv.value);
+      console.log(`Setting "${argv.config}" saved.`);
     }
   )
   .option("verbose", {
