@@ -14,6 +14,7 @@ export class RelayServer {
     this.domain = domain;
     this.certService = certService;
     this.password = password;
+    this.hostPrefix = this.domain.indexOf("couloir") > -1 ? "porte" : "couloir";
     this.couloirs = {};
     this.sockets = {};
     this.keyToHost = {};
@@ -75,13 +76,12 @@ export class RelayServer {
         `Client version (${clientVersion}) is not compatible with server version (${version}).`
       );
     }
-
     if (!host.endsWith(`.${this.domain}`)) {
-      host = `couloir.${this.domain}`;
+      host = `${this.hostPrefix}.${this.domain}`;
       let counter = 0;
       while (this.couloirs[host]) {
         counter++;
-        host = `couloir${counter}.${this.domain}`;
+        host = `${this.hostPrefix}${counter}.${this.domain}`;
       }
     }
 
