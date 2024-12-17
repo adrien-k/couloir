@@ -80,7 +80,7 @@ export default class RelayCouloir {
 
   bindNextSocket() {
     this.log(
-      `Binding sockets clients:${this.pendingClients.length}, hosts: ${this.availableHosts.length}`
+      `Binding sockets clients:${this.pendingClients.length}, hosts: ${this.availableHosts.length}`,
     );
     if (this.pendingClients.length && this.availableHosts.length) {
       const clientSocket = this.pendingClients.shift();

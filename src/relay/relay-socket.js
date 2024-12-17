@@ -90,8 +90,8 @@ export default class RelaySocket extends CouloirClientSocket {
         this.socket.write(
           htmlResponse(
             headers,
-            logo(`\n\n  To open a new couloir, run:\n  > ${this.relay.exposeCommand()}`)
-          )
+            logo(`\n\n  To open a new couloir, run:\n  > ${this.relay.exposeCommand()}`),
+          ),
         );
         this.socket.end();
         return;
@@ -102,7 +102,7 @@ export default class RelaySocket extends CouloirClientSocket {
         this.socket.write(
           htmlResponse(headers, logo(`404 - Couloir "${host}" is not open`, { center: true }), {
             status: "404 Not found",
-          })
+          }),
         );
         this.socket.end();
       }

@@ -6,7 +6,7 @@ import RelayCouloir from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
 
 export class RelayServer {
-  constructor({ http, relayPort, log, verbose, domain, certService, password }) {
+  constructor({ http, relayPort, log, verbose, domain, certService, password } = {}) {
     this.http = http;
     this.relayPort = relayPort;
     this.log = log;
@@ -70,10 +70,10 @@ export class RelayServer {
     }
   }
 
-  openCouloir({ host, password, version: clientVersion}) {
+  openCouloir({ host, password, version: clientVersion }) {
     if (clientVersion && !equalVersions(clientVersion, version, "minor")) {
       throw new Error(
-        `Client version (${clientVersion}) is not compatible with server version (${version}).`
+        `Client version (${clientVersion}) is not compatible with server version (${version}).`,
       );
     }
     if (!host.endsWith(`.${this.domain}`)) {
@@ -86,7 +86,11 @@ export class RelayServer {
     }
 
     if (this.password && password !== this.password) {
-      throw new Error(password ? "Invalid Relay password." : "This Relay require a password. Use the --password <password> option.");
+      throw new Error(
+        password
+          ? "Invalid Relay password."
+          : "This Relay require a password. Use the --password <password> option.",
+      );
     }
 
     if (this.couloirs[host]) {
@@ -116,6 +120,9 @@ export class RelayServer {
       socket.end();
       return;
     }
+
+    // Prevent dead sockets
+    socket.setKeepAlive(true, 30000);
 
     const relaySocket = new RelaySocket(this, socket);
     this.sockets[relaySocket.id] = relaySocket;
