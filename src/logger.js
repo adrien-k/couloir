@@ -5,8 +5,8 @@ export function timestamp() {
     .join(":");
 }
 
-export function loggerFactory({ verbose = false } = {}) {
-  return function log(msg, level = "debug") {
+export function loggerFactory({ verbose = false, hide = [] } = {}) {
+  return function log(msg, level = "debug", { raw = false } = {}) {
     if (level === "debug" && !verbose) {
       return;
     }
@@ -14,8 +14,15 @@ export function loggerFactory({ verbose = false } = {}) {
     if (msg instanceof Error) {
       msg = errorMessage(msg, { verbose });
     }
+    for (const hidePattern of hide) {
+      const regex = new RegExp(hidePattern, "g");
+      msg = msg.replace(regex, "<HIDDEN>");
+    }
 
-    msg = `[${timestamp()}] ${level}: ${msg}`;
+    if (!raw) {
+      msg = `[${timestamp()}] ${level}: ${msg}`;
+    }
+    
     if (level === "error" || level === "fatal" || level === "warn") {
       console.error(msg);
     } else {

@@ -10,6 +10,19 @@ import expose from "./src/expose/index.js";
 import logo from "./src/logo.js";
 import { settings, saveSetting } from "./src/config.js";
 
+function printConfig(argv) {
+  const settingKeys = Object.keys(settings);
+  if (settingKeys.length) {
+    argv.log(
+      `Using stored configuration:\n${settingKeys
+        .map((k) => `- ${k}: ${settings[k]}`)
+        .join("\n")}\n`,
+      "info",
+      { raw: true }
+    );
+  }
+}
+
 yargs(hideBin(process.argv))
   .scriptName("couloir")
   .version(false)
@@ -20,7 +33,7 @@ yargs(hideBin(process.argv))
   .middleware((argv) => ({
     ...argv,
     relayPort: argv.relayPort || (argv.http ? 80 : 443),
-    log: loggerFactory(argv),
+    log: loggerFactory({ ...argv, hide: [argv.password] }),
   }))
   .command("version", "Show the current version\n", () => {
     console.log(version);
@@ -33,6 +46,7 @@ yargs(hideBin(process.argv))
       return yargs
         .positional("domain", {
           describe: "Domain under which to couloir hosts will be created.",
+          type: "string",
         })
         .option("relay-port", {
           alias: "port",
@@ -45,23 +59,34 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Require a password to access the relay.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
+          describe: `Require a password to access the relay.${
+            settings["password"] ? "\n[default: <hidden>]" : ""
+          }`,
           type: "string",
         })
         .option("email", {
-          describe: "Email used for Let's Encrypt cert generation",
-          default: settings["email"] || "test@example.com",
+          describe:
+            "Email used for Let's Encrypt cert generation, used to notify about expiration. Default is admin@<domain>.",
+          type: "string",
+          default: settings["email"] || "admin@<domain>",
         });
     },
     async (argv) => {
-      console.log(logo(`Relay Server | Version ${version}`, { stdout: true, center: true }));
+      console.log(
+        logo(`Relay Server | Version ${version}`, { stdout: true, center: true }),
+      );
+      printConfig(argv);
+
       if (argv.password && argv.http) {
-        console.warn(
-          "Warning: password protection is not recommended in HTTP-only mode as the password will be sent in plain text to the relay. Use with caution.\n",
+        argv.log(
+          "Warning: password protection is not recommended in HTTP-only mode as the password will be sent in plain text to the relay. Use with caution.",
+          "warn",
+          { raw: true }
         );
       }
+
       await relay(argv).start();
-    },
+    }
   )
   .command(
     ["expose <local-port>", "$0 <local-port>"],
@@ -79,6 +104,7 @@ yargs(hideBin(process.argv))
         })
         .option("name", {
           alias: "as",
+          type: "string",
           describe: "Name for the couloir subdomain. By default it will be couloir.<relay-host>.",
         })
         .option("relay-port", {
@@ -87,9 +113,11 @@ yargs(hideBin(process.argv))
         })
         .option("relay-ip", {
           describe: "Connect to the relay using an IP address instead of the given hostname.",
+          type: "string",
         })
         .option("local-host", {
           describe: "Local host to proxy to if not localhost.",
+          type: "string",
           default: "localhost",
         })
         .options("override-host", {
@@ -101,17 +129,20 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Password to access the relay, if required.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
+          describe: `Password to access the relay, if required.${
+            settings["password"] ? "\n[default: <hidden>]" : ""
+          }`,
           type: "string",
         }),
     async (argv) => {
       console.log(logo(`Host Server | Version ${version}`, { stdout: true, center: true }));
+      printConfig(argv);
       await expose(argv).start();
-    },
+    }
   )
   .command(
     "set <config> [value]",
-    "Set default values for the `relay-host`, `relay-port` and `password` values",
+    "Set default values for the `relay-host`, `relay-port`, `password` and other values",
     (yargs) =>
       yargs
         .positional("config", {
@@ -122,8 +153,21 @@ yargs(hideBin(process.argv))
         }),
     async (argv) => {
       saveSetting(argv.config, argv.value);
-      console.log(`Setting "${argv.config}" saved.`);
-    },
+      argv.log(`Setting "${argv.config}" saved. Settings:\n${JSON.stringify(settings, null, 2)}`, "info", { raw: true});
+    }
+  )
+  .command(
+    "unset <config>",
+    "Unset the default config value",
+    (yargs) =>
+      yargs
+        .positional("config", {
+          describe: "Setting to persist",
+        }),
+    async (argv) => {
+      saveSetting(argv.config);
+      argv.log(`Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(settings, null, 2)}`, "info", { raw: true});
+    }
   )
   .option("verbose", {
     alias: "v",
