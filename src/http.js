@@ -112,7 +112,7 @@ export function proxyHttp(
     onClientSocketEnd,
     transformResHead = ({ head }) => head,
     onServerSocketEnd,
-  }
+  },
 ) {
   const requestHeadParser = new HttpHeadParserTransform(clientSocket, {
     label: "req",

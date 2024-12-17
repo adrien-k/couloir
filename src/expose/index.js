@@ -80,7 +80,11 @@ export default function expose(exposeOptions) {
       requestedCouloirHost = `${name}.${relayHost}`;
     }
     const socket = await ExposeSocket.create(exposeOptions);
-    const { host, key } = await socket.couloirProtocol.sendMessage(COULOIR_OPEN, { version, host: requestedCouloirHost, password });
+    const { host, key } = await socket.couloirProtocol.sendMessage(COULOIR_OPEN, {
+      version,
+      host: requestedCouloirHost,
+      password,
+    });
     activeSockets[socket.id] = socket;
     await joinCouloir(socket, key);
 

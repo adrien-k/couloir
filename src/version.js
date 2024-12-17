@@ -9,18 +9,18 @@ export function equalVersions(a, b, level) {
   const [aMajor, aMinor] = a.split(".");
   const [bMajor, bMinor] = b.split(".");
   if (aMajor !== bMajor) {
-    return false
+    return false;
   }
-  if (level === "major") return true
+  if (level === "major") return true;
 
   if (aMinor !== bMinor) {
-    return false
+    return false;
   }
-  if (level === "minor") return true
+  if (level === "minor") return true;
 
   if (level === "patch") {
     return a === b;
   }
-  
+
   throw new Error(`Invalid level: ${level}`);
 }

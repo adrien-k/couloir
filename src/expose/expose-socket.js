@@ -112,20 +112,20 @@ export default class ExposeSocket extends CouloirClientSocket {
                 await beforeClose();
               },
             });
-          }
+          },
         );
 
         this.localSocket.on("error", (err) => {
           this.log("Unable to connect to local server.", "error");
           this.log(err, "error");
           this.socket.write(
-            `HTTP/1.1 502 Bad Gateway\r\n\r\n502 - Unable to connect to your local server on ${this.localHost}:${this.localPort}`
+            `HTTP/1.1 502 Bad Gateway\r\n\r\n502 - Unable to connect to your local server on ${this.localHost}:${this.localPort}`,
           );
           this.socket.end();
           return;
         });
       },
-      { skipResponse: true }
+      { skipResponse: true },
     );
 
     await this.sendMessage(COULOIR_JOIN, { key: couloirKey });

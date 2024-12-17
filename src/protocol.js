@@ -4,7 +4,7 @@ import EventEmitter from "node:events";
 const COULOIR_MATCHER = /^(?<key>COULOIR[ _][A-Z]+( ACK)?)( (?<payload>.*))?$/;
 const MESSAGE_SEPARATOR = "\r\n\r\n";
 
-const COULOIR_MESSAGE_FIRST_BYTES = "COULOIR"
+const COULOIR_MESSAGE_FIRST_BYTES = "COULOIR";
 export const COULOIR_OPEN = "COULOIR_OPEN";
 export const COULOIR_JOIN = "COULOIR_JOIN";
 export const COULOIR_STREAM = "COULOIR_STREAM";
@@ -37,7 +37,7 @@ export class CouloirProtocolInterceptor extends Transform {
               resolve(response);
             }
           },
-          { skipResponse: true }
+          { skipResponse: true },
         );
 
         this.socket.on("close", () => {
@@ -92,7 +92,7 @@ export class CouloirProtocolInterceptor extends Transform {
     if (this.expectingAck && rest.length) {
       this.log(
         "Unexpected response from the relay.\nPlease check that you are connecting to a Couloir relay server and that it runs the same version.",
-        "error"
+        "error",
       );
       process.exit(1);
     }

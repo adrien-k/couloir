@@ -97,6 +97,7 @@ couloir set password foobar
 ```
 
 Then, you can simply open a couloir with:
+
 ```sh
 couloir 3000
 ```

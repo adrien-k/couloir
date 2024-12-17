@@ -15,7 +15,7 @@ yargs(hideBin(process.argv))
   .version(false)
   .middleware((argv) => ({
     ...settings,
-    ...argv
+    ...argv,
   }))
   .middleware((argv) => ({
     ...argv,
@@ -45,23 +45,23 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Require a password to access the relay.${settings['password'] ?"\n[default: <hidden>]" :''}`,
+          describe: `Require a password to access the relay.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
           type: "string",
         })
         .option("email", {
           describe: "Email used for Let's Encrypt cert generation",
-          default: settings['email'] || "test@example.com",
+          default: settings["email"] || "test@example.com",
         });
     },
     async (argv) => {
       console.log(logo(`Relay Server | Version ${version}`, { stdout: true, center: true }));
       if (argv.password && argv.http) {
         console.warn(
-          "Warning: password protection is not recommended in HTTP-only mode as the password will be sent in plain text to the relay. Use with caution.\n"
+          "Warning: password protection is not recommended in HTTP-only mode as the password will be sent in plain text to the relay. Use with caution.\n",
         );
       }
       await relay(argv).start();
-    }
+    },
   )
   .command(
     ["expose <local-port>", "$0 <local-port>"],
@@ -101,27 +101,29 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Password to access the relay, if required.${settings['password'] ?"\n[default: <hidden>]" :''}`,
+          describe: `Password to access the relay, if required.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
           type: "string",
         }),
     async (argv) => {
       console.log(logo(`Host Server | Version ${version}`, { stdout: true, center: true }));
       await expose(argv).start();
-    }
+    },
   )
   .command(
     "set <config> [value]",
     "Set default values for the `relay-host`, `relay-port` and `password` values",
     (yargs) =>
-      yargs.positional("config", {
-        describe: "Setting to persist",
-      }).positional("value", {
-        describe: "Value to persist for the setting. Providing no value will clear the setting.",
-      }),
+      yargs
+        .positional("config", {
+          describe: "Setting to persist",
+        })
+        .positional("value", {
+          describe: "Value to persist for the setting. Providing no value will clear the setting.",
+        }),
     async (argv) => {
       saveSetting(argv.config, argv.value);
       console.log(`Setting "${argv.config}" saved.`);
-    }
+    },
   )
   .option("verbose", {
     alias: "v",
