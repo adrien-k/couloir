@@ -103,7 +103,7 @@ export default function expose(exposeOptions) {
     const relayUrl = new URL(`http://${host}:${relayPort}`);
     relayUrl.protocol = http ? "http" : "https";
     const hostUrl = new URL(`http://${localHost}:${localPort}`);
-    log(`>>> Couloir opened: ${relayUrl} => ${hostUrl}`, "info");
+    log(`\n>>> Couloir opened:\n\n${relayUrl} => ${hostUrl}\n`, "info", { raw: true});
 
     process.on("SIGINT", onSigInt);
   };

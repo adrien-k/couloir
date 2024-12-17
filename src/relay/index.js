@@ -9,7 +9,7 @@ export default function relay({
   relayPort,
   domain,
   http = false,
-  email = "test@example.com",
+  email = `admin@${domain}`,
   certsDirectory = join(CONFIG_DIR, "certs"),
   password,
   log = loggerFactory(),
@@ -49,8 +49,7 @@ export default function relay({
 
       await relay.listen();
 
-      log(`>>> Relay server started on port ${relayPort}`, "info");
-      log(`>>> Run '${relay.exposeCommand()}' to open a new couloir`, "info");
+      log(`\n>>> Relay server started on port ${relayPort}\n>>> Run '${relay.exposeCommand()}' to open a new couloir\n\n`, "info", { raw: true});
     },
     stop: async ({ force = false } = {}) => {
       await certService?.stop();

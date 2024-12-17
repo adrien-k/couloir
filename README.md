@@ -46,7 +46,7 @@ sub.domain.com A 1.2.3.4
 3. Run the Couloir relay. The email option is required to request Let's Encrypt certificates.
 
 ```sh
-couloir relay sub.domain.com --email your@email.com
+couloir relay sub.domain.com
 ```
 
 ### On your **local** machine
@@ -80,7 +80,7 @@ being transmitted in clear over the TCP Socket._
 
 ```sh
 # On the relay
-couloir relay sub.domain.com --email your@email.com --password foobar
+couloir relay sub.domain.com --password foobar
 
 # On your local machine
 couloir 3000 --on sub.domain.com --password foobar
@@ -145,7 +145,7 @@ Install pm2 with `npm install -g pm2`.
 Then:
 
 ```sh
-pm2 start "couloir relay sub.domain.com --email your@email.com" --name couloir
+pm2 start "couloir relay sub.domain.com" --name couloir
 pm2 save
 # To have the daemon run on boot. Follow instructions.
 pm2 startup
