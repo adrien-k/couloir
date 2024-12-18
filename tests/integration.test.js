@@ -13,17 +13,35 @@ const __dirname = dirname(__filename);
 const RELAY_PORT = 30020;
 const LOCAL_PORT = 30021;
 const BINARY_BODY = Buffer.from([0x80]); // non-utf8 character for fun
+const BIT_FLOW_DELAY = 50
 
-// leave some loops for async calls to flow through
+function socketDataPromise(socket) {
+  return new Promise((resolve) => {
+    let data = Buffer.from([]);
+    let resolveTimeout;
+    const onData = (d) => {
+      if (resolveTimeout) {
+        clearTimeout(resolveTimeout);
+      }
+      data = Buffer.concat([data, d]);
+      resolveTimeout = setTimeout(() => {
+        socket.off("data", onData);
+        resolve(data);
+      }, BIT_FLOW_DELAY);
+    };
+    socket.on("data", onData);
+  });
+}
+
 async function waitUntil(condition, tries = 1) {
   try {
     condition();
   } catch (e) {
-    if (tries >= 10) {
+    if (tries >= 4) {
       throw e;
     }
     return new Promise((resolve, reject) =>
-      setTimeout(() => waitUntil(condition, tries + 1).then(resolve, reject), 20),
+      setTimeout(() => waitUntil(condition, tries + 1).then(resolve, reject), BIT_FLOW_DELAY),
     );
   }
 }
@@ -58,6 +76,7 @@ beforeEach(() => {
     domain: "test.local",
     http: true,
     log: logFactory("relay"),
+    verbose: true,
   };
   exposeConfig = {
     localPort: LOCAL_PORT,
@@ -67,6 +86,7 @@ beforeEach(() => {
     maxConcurrency: 1,
     http: true,
     log: logFactory("expose"),
+    verbose: true,
   };
 });
 
@@ -74,16 +94,22 @@ let setup = async (
   {
     httpResponse = () => `HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar${responseCounter++}`,
     keepAlive = false,
-    onLocalConnection = (socket) => {
-      socket.on("data", (data) => {
-        localServerReceived.push(data);
+    onLocalConnection = async (socket) => {
+      let connected = true 
+      socket.on("end", () => {
+        connected = false
+      })
 
+      while(connected) {
+        const data = await socketDataPromise(socket)
+        localServerReceived.push(data);
         socket.write(typeof httpResponse === "function" ? httpResponse() : httpResponse);
         if (!keepAlive) {
+          connected = false;
           socket.end();
           socket.destroy();
         }
-      });
+      }
     },
   },
   testFn,
@@ -127,14 +153,8 @@ const DEFAULT_REQUEST = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo";
 
 async function sendRelayRequest(httpRequest = DEFAULT_REQUEST, { socket } = {}) {
   socket = socket || (await createRelayConnection());
-  return new Promise((resolve) => {
-    const onData = (data) => {
-      socket.off("data", onData);
-      resolve(data);
-    };
-    socket.on("data", onData);
-    socket.write(httpRequest);
-  });
+  socket.write(httpRequest);
+  return socketDataPromise(socket)
 }
 
 it("tunnels http request/response from relay to local server and back", async () => {
@@ -298,8 +318,12 @@ it("can handle multiple requests in the same socket", async () => {
     const response1 = await sendRelayRequest(httpRequest, { socket });
     assert.equal(
       localServerReceived[0].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo"
     );
+    // assert.equal(
+    //   localServerReceived[1].toString(),
+    //   "foo"
+    // );
     assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
     const response2 = await sendRelayRequest(httpRequest, { socket });
     assert.equal(
@@ -375,7 +399,7 @@ it("can work over TLS", async () => {
           servername: "couloir.test.local",
         },
         () => {
-          socket.on("data", resolve);
+          socketDataPromise(socket).then(resolve);
           socket.write(httpRequest);
         },
       );
@@ -401,8 +425,8 @@ it("should not close the couloir when closing the last client socket", async () 
   await setup({ keepAlive: true }, async () => {
     const response = await new Promise((resolve, reject) => {
       const socket = net.createConnection({ port: RELAY_PORT }, () => {
-        socket.on("data", (data) => {
-          resolve(data);
+        socketDataPromise(socket).then((response) => {
+          resolve(response);
           socket.end(); // <------ this is the the important change + keepAlive: true
           //         meaning the client closes the socket while the server was keeping it open.
         });

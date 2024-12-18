@@ -3,7 +3,7 @@ import tls from "node:tls";
 
 import CouloirClientSocket from "../couloir-client-socket.js";
 import { COULOIR_STREAM, COULOIR_JOIN } from "../protocol.js";
-import { proxyHttp, parseReqHead, parseResHead, serializeReqHead } from "../http.js";
+import { createProxy } from "../http.js";
 
 export default class ExposeSocket extends CouloirClientSocket {
   constructor(socket, { verbose, log, localHost, localPort, overrideHost }) {
@@ -60,7 +60,7 @@ export default class ExposeSocket extends CouloirClientSocket {
   }
 
   async joinCouloir(couloirKey, { beforeStream, beforeClose }) {
-    this.onMessage(
+    this.couloirProtocol.onMessage(
       COULOIR_STREAM,
       async () => {
         await beforeStream();
@@ -68,67 +68,57 @@ export default class ExposeSocket extends CouloirClientSocket {
         this.localSocket = net.createConnection(
           { host: this.localHost, port: this.localPort },
           () => {
-            // This is a singular socket so we can init the access log on the request
-            // and log it on the response without conflicts.
-            let accessLog = "";
-            let reqStart;
+            createProxy(this, this.localSocket, {
+              end: false,
 
-            proxyHttp(this.socket, this.localSocket, {
-              clientStream: this.stream,
-              transformReqHead: ({ head }) => {
-                reqStart = Date.now();
-                const headParts = parseReqHead(head);
-                const { method, path } = headParts;
-                accessLog = `${method} ${path}`;
-
-                if (this.overrideHost) {
-                  headParts.headers["Host"] = [this.overrideHost];
-                }
-
-                return serializeReqHead(headParts);
-              },
-              transformResHead: ({ head }) => {
-                const { status } = parseResHead(head);
-                accessLog += ` -> ${status} (${Date.now() - reqStart} ms)`;
-                this.log(accessLog, "info");
-                return head;
-              },
               onClientSocketEnd: async () => {
-                if (this.closedBy) {
-                  return;
+                if (!this.closedBy) {
+                  this.closedBy = "client";
+                  this.log("Relay socket closed. Closing local server socket.");
+                  await beforeClose();
                 }
-
-                this.closedBy = "client";
-                this.log("Relay socket closed. Closing local server socket.");
-                await beforeClose();
+                this.localSocket.end();
               },
               onServerSocketEnd: async () => {
-                if (this.closedBy) {
-                  return;
+                if (!this.closedBy) {
+                  this.closedBy = "server";
+                  this.log(
+                    "Local server socket closing which will in turn close the relay socket."
+                  );
+                  await beforeClose();
                 }
-
-                this.closedBy = "server";
-                this.log("Local server socket closing which will in turn close the relay socket.");
-                await beforeClose();
+                this.socket.end();
               },
-            });
-          },
-        );
+            })(async (ctx, next) => {
+              const reqStart = Date.now();
+              const { method, path } = ctx.req;
+              let accessLog = `${method} ${path}`;
 
+              if (this.overrideHost) {
+                ctx.req.headers["Host"] = [this.overrideHost];
+              }
+              await next();
+
+              accessLog += ` -> ${ctx.res.status} (${Date.now() - reqStart} ms)`;
+
+              this.log(accessLog, "info");
+            });
+          }
+        );
         this.localSocket.on("error", (err) => {
           this.log("Unable to connect to local server.", "error");
           this.log(err, "error");
           this.socket.write(
-            `HTTP/1.1 502 Bad Gateway\r\n\r\n502 - Unable to connect to your local server on ${this.localHost}:${this.localPort}`,
+            `HTTP/1.1 502 Bad Gateway\r\n\r\n502 - Unable to connect to your local server on ${this.localHost}:${this.localPort}`
           );
           this.socket.end();
           return;
         });
       },
-      { skipResponse: true },
+      { skipResponse: true }
     );
 
-    await this.sendMessage(COULOIR_JOIN, { key: couloirKey });
+    await this.couloirProtocol.sendMessage(COULOIR_JOIN, { key: couloirKey });
     this.joined = true;
   }
 }
