@@ -3,7 +3,6 @@
  */
 
 import fs from "fs";
-import os from "os";
 import tls from "node:tls";
 import { join } from "node:path";
 import http from "node:http";
