@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 export function timestamp() {
   const now = new Date();
   return [now.getHours(), now.getMinutes(), now.getSeconds()]
@@ -6,7 +7,7 @@ export function timestamp() {
 }
 
 export function loggerFactory({ verbose = false, hide = [] } = {}) {
-  return function log(msg, level = "debug", { raw = false } = {}) {
+  function log(msg, level = "debug", { raw = false } = {}) {
     if (level === "debug" && !verbose) {
       return;
     }
@@ -29,6 +30,15 @@ export function loggerFactory({ verbose = false, hide = [] } = {}) {
       console.log(msg);
     }
   };
+
+  log.error = (msg) => log(msg, "error");
+  log.warn = (msg) => log(msg, "warn");
+  log.fatal = (msg) => log(msg, "fatal");
+  log.info = (msg) => log(msg, "info");
+  log.debug = (msg) => log(msg, "debug");
+  log.raw = (msg, level = "info") => log(msg, level, { raw: true });
+
+  return log
 }
 
 export function defaultLogger(msg, level = "debug") {

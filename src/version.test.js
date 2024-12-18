@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { equalVersions } from "./version.js";
 
-describe("eqalVersions", () => {
+describe("equalVersions", () => {
   it("compares major versions", () => {
     assert.equal(equalVersions("1.1.1", "1.1.2", "major"), true);
     assert.equal(equalVersions("1.1.1", "1.2.1", "major"), true);

@@ -10,19 +10,15 @@ export default class CouloirClientSocket {
     this.stream = socket.pipe(this.couloirProtocol);
   }
 
-  onMessage(key, handler, options) {
-    this.couloirProtocol.onMessage(key, handler, options);
-  }
-
-  sendMessage(key, value, options) {
-    return this.couloirProtocol.sendMessage(key, value, options);
-  }
-
-  write(data) {
-    this.socket.write(data);
-  }
-
-  pipe(otherStream, options = {}) {
-    return this.stream.pipe(otherStream, options);
-  }
+  /**
+   * Rewire some method to make it behave like a normal Socket even though there
+   * is a Transform stream in between.
+   *
+   * We want to read from the Transform stream but write to the socket - as writing to the
+   * transform stream would just flow back.
+   */
+  write = (...args) => this.socket.write(...args);
+  on = (...arg) => this.stream.on(...arg);
+  off = (...arg) => this.stream.off(...arg);
+  pipe = (...arg) => this.stream.pipe(...arg);
 }

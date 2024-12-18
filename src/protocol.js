@@ -15,6 +15,10 @@ export class CouloirProtocolInterceptor extends Transform {
     this.log = log;
     this.socket = socket;
     this.protocolEvents = new EventEmitter();
+    this.firstChunk = true;
+    this.isCouloir = new Promise((resolve) => {
+      this.protocolEvents.once("is-couloir", resolve)
+    })
   }
 
   ackKey(key) {
@@ -26,27 +30,30 @@ export class CouloirProtocolInterceptor extends Transform {
     if (!skipResponse) {
       responsePromise = new Promise((resolve, reject) => {
         this.expectingAck = true;
-
+        
         this.onMessage(
           this.ackKey(key),
           (response) => {
             this.expectingAck = false;
+            this.socket.off("close", onClose)
             if (response?.error) {
               reject(new Error(response.error));
             } else {
               resolve(response);
             }
           },
-          { skipResponse: true },
+          { skipResponse: true }
         );
 
-        this.socket.on("close", () => {
+        const onClose = () => {
           if (this.expectingAck) {
             // This usually happens when the relay server is closed before the couloir was
             // completly joins (mostly in tests)
             reject("Relay connection closed prematurely", "info");
           }
-        });
+        }
+
+        this.socket.on("close", onClose)
       });
     }
 
@@ -61,9 +68,9 @@ export class CouloirProtocolInterceptor extends Transform {
   }
 
   onMessage(key, handler, { skipResponse = false } = {}) {
-    const handlerWithResponse = async (messageRaw) => {
+    const handlerWithResponse = async (payload) => {
       this.protocolEvents.off(key, handlerWithResponse);
-      const message = messageRaw && JSON.parse(messageRaw);
+      const message = payload && JSON.parse(payload);
       let responseSent = false;
       const sendResponseOnce = (response) => {
         if (!responseSent && !skipResponse) {
@@ -74,19 +81,32 @@ export class CouloirProtocolInterceptor extends Transform {
       const response = await handler(message, sendResponseOnce);
       sendResponseOnce(response);
     };
-    this.protocolEvents.on(key, handlerWithResponse);
+    this.protocolEvents.on("message", ({ key: messageKey, payload}) => {
+      if (key === messageKey) {
+        handlerWithResponse(payload);
+      }
+    });
+  }
+
+  onNotCouloir(handler) {
+    this.protocolEvents.once("not-couloir", handler);
   }
 
   _transform(chunk, _encoding, callback) {
+    if (this.firstChunk) {
+      this.firstChunk = false;
+      this.protocolEvents.emit("is-couloir", chunk.indexOf("COULOIR") === 0);
+    }
+
     let rest = chunk;
     while (rest.indexOf(COULOIR_MESSAGE_FIRST_BYTES) === 0) {
       const cutoff = rest.indexOf(MESSAGE_SEPARATOR);
       const message = rest.subarray(0, cutoff).toString();
       rest = rest.subarray(cutoff + 4);
-
+      
       this.log(`Received Couloir message: ${message}`);
       const { key, payload } = COULOIR_MATCHER.exec(message).groups;
-      this.protocolEvents.emit(key, payload);
+      this.protocolEvents.emit("message", { key, payload });
     }
 
     if (this.expectingAck && rest.length) {
