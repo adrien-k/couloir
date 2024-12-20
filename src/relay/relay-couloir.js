@@ -11,17 +11,12 @@ export default class RelayCouloir {
     this.availableHosts = [];
     this.pendingClients = [];
     this.key = crypto.randomBytes(24).toString("hex");
-  }
-
-  log(message, level) {
-    this.relay.log(`[${this.host}] ${message}`, level);
+    this.log = this.relay.log.tags([this.host]);
   }
 
   addHostSocket(socket) {
     socket.couloir = this;
-    socket.host = this.host;
-    socket.log("identified");
-    socket.type = TYPE_HOST;
+    socket.setType(TYPE_HOST, this.host);
     this.lastHostId = socket.id;
 
     this.hostsSockets[socket.id] = socket;
@@ -66,9 +61,7 @@ export default class RelayCouloir {
 
   addClientSocket(socket) {
     socket.couloir = this;
-    socket.host = this.host;
-    socket.type = TYPE_CLIENT;
-    socket.log("identified");
+    socket.setType(TYPE_CLIENT, this.host);
 
     this.pendingClients.push(socket);
     this.bindNextSocket();
@@ -79,7 +72,7 @@ export default class RelayCouloir {
   }
 
   bindNextSocket() {
-    this.log(
+    this.log.debug(
       `Binding sockets clients:${this.pendingClients.length}, hosts: ${this.availableHosts.length}`,
     );
     if (this.pendingClients.length && this.availableHosts.length) {

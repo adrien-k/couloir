@@ -6,7 +6,7 @@ export default class CouloirClientSocket {
     this.id = ++socketId;
 
     this.socket = socket;
-    this.couloirProtocol = new CouloirProtocolInterceptor(socket, { log: this.log.bind(this) });
+    this.couloirProtocol = new CouloirProtocolInterceptor(socket, this);
     this.stream = socket.pipe(this.couloirProtocol);
   }
 

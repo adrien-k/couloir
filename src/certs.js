@@ -77,8 +77,7 @@ async function createClient(certsDirectory) {
  *
  */
 export function createCertServer({ domain, certsDirectory, log, email, allowServername } = {}) {
-  const originalLog = log;
-  log = (msg, level) => originalLog(`[Cert] ${msg}`, level);
+  log = log.tags(["Cert"]);
 
   const pendingDomains = {};
   const challengeResponses = {};
@@ -123,13 +122,13 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
     pendingDomains[servername] = true;
 
     /* Create CSR */
-    log(`Creating CSR for ${servername}`);
+    log.debug(`Creating CSR for ${servername}`);
     const [key, csr] = await acme.crypto.createCsr({
       altNames: [servername],
     });
 
     /* Order certificate */
-    log(`Ordering certificate for ${servername}`, "info");
+    log.info(`Ordering certificate for ${servername}`);
     const cert = await client.auto({
       csr,
       email,
@@ -144,7 +143,7 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
     });
 
     /* Done, store certificate */
-    log(`Certificate for ${servername} created successfully`, "info");
+    log.info(`Certificate for ${servername} created successfully`);
     certificateStore[servername] = [key, cert];
     await saveCertificate(certsDirectory, servername, key, cert);
     delete pendingDomains[servername];
@@ -156,29 +155,29 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
    */
 
   const httpServer = http.createServer((req, res) => {
-    const serverLog = (msg, level) => log(`[${req.socket.remoteAddress}] ${msg}`, level);
+    const serverLog = log.tags([req.socket.remoteAddress]);
 
     if (req.url.match(/\/\.well-known\/acme-challenge\/.+/)) {
       const token = req.url.split("/").pop();
-      serverLog(`Received challenge request for token=${token}`, "info");
+      serverLog.info(`Received challenge request for token=${token}`);
 
       /* ACME challenge response */
       if (token in challengeResponses) {
-        serverLog(`Serving challenge response HTTP 200 token=${token}`);
+        serverLog.debug(`Serving challenge response HTTP 200 token=${token}`);
         res.writeHead(200);
         res.end(challengeResponses[token]);
         return;
       }
 
       /* Challenge response not found */
-      serverLog(`Oops, challenge response not found for token=${token}`);
+      serverLog.debug(`Oops, challenge response not found for token=${token}`);
       res.writeHead(404);
       res.end();
       return;
     }
 
     /* HTTP 302 redirect */
-    serverLog(`HTTP 302 ${req.headers.host}${req.url}`, "info");
+    serverLog.info(`HTTP 302 ${req.headers.host}${req.url}`);
     res.writeHead(302, { Location: `https://${req.headers.host}${req.url}` });
     res.end();
   });
@@ -188,7 +187,7 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
       const [key, cert] = await getCertOnDemand(servername);
       cb(null, tls.createSecureContext({ key, cert }));
     } catch (e) {
-      log(`Failed to get certificate for ${servername}: ${e.message}`, "error");
+      log.error(`Failed to get certificate for ${servername}: ${e.message}`);
       if (servername !== domain) {
         // Fallback on Relay domain cert
         return sniCallback(domain, cb);
@@ -202,14 +201,16 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
     start: async () => {
       const certificateStore = await certsPromise;
       if (certificateStore[domain] && certificateStore[`*.${domain}`]) {
-        log(`TLS certificates found for ${domain} and *.${domain}`, "info");
+        log.info(`TLS certificates found for ${domain} and *.${domain}`);
         return;
       }
 
       return new Promise((resolve, reject) => {
         httpServer.on("error", reject);
         httpServer.listen(HTTP_SERVER_PORT, () => {
-          log(`Validation server listening on port ${HTTP_SERVER_PORT}`, "info");
+          log.raw(
+            `\n>>> Validation server listening on port ${HTTP_SERVER_PORT}\n>>> Requesting certs with email: ${email}\n`,
+          );
           resolve();
         });
       });

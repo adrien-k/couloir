@@ -53,6 +53,7 @@ export function serializeResHead({ version, status, statusMessage, headers }) {
 // Unsafe, only use with trusted input.
 export function htmlResponse(reqHeaders, text, { status = "200 OK" } = {}) {
   if (reqHeaders.Accept?.[0]?.includes("text/html")) {
+    const htmlText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const style = `
     body { font-family: monospace; font-size: 1em; white-space: pre; }
     @media (max-width: 750px) { body { font-size: 0.8em; }
@@ -61,7 +62,7 @@ export function htmlResponse(reqHeaders, text, { status = "200 OK" } = {}) {
     `;
     const html =
       `<html><head><meta content="width=device-width, initial-scale=1" name="viewport" /><style>${style}</style></head><body>` +
-      text +
+      htmlText +
       "</body></html>";
 
     return `HTTP/1.1 ${status}\r\nContent-Type: text/html\r\nContent-Length: ${html.length}\r\n\r\n${html}`;
@@ -203,11 +204,11 @@ function composeMiddleWares(middlewares) {
 export const createProxy = (
   clientSocket,
   serverSocket,
-  { end = true, onServerSocketEnd, onClientSocketEnd } = {}
+  { end = true, onServerSocketEnd, onClientSocketEnd } = {},
 ) => {
   let open = true;
-  let serverSocketError
-  
+  let serverSocketError;
+
   clientSocket.on("end", async () => {
     open = false;
     if (onClientSocketEnd) await onClientSocketEnd();
@@ -218,14 +219,13 @@ export const createProxy = (
     open = false;
     if (onServerSocketEnd) await onServerSocketEnd();
     if (end) clientSocket.end();
-  }
+  };
   serverSocket.on("end", internalOnServerSocketEnd);
 
   serverSocket.on("error", (err) => {
-    serverSocketError = err
-  })
+    serverSocketError = err;
+  });
 
-  
   let middlewares = [];
   let handler;
   let connectionErrorHandler = async (ctx) => {
@@ -237,9 +237,9 @@ export const createProxy = (
     handler = composeMiddleWares(middlewares);
   };
 
-  const connectionError = fn => {
-    connectionErrorHandler = fn
-  }
+  const connectionError = (fn) => {
+    connectionErrorHandler = fn;
+  };
 
   const run = async () => {
     let ctx;
@@ -256,14 +256,14 @@ export const createProxy = (
           if (serverSocket.connecting) {
             // Wait for resolution both success or failure. Error is handled below generically.
             await new Promise((r) => {
-              serverSocket.once("connect", r)
-              serverSocket.once("error", r)
+              serverSocket.once("connect", r);
+              serverSocket.once("error", r);
             });
           }
 
           if (serverSocketError) {
-            await connectionErrorHandler(ctx, serverSocketError)
-            ctx.endServerSocket = true
+            await connectionErrorHandler(ctx, serverSocketError);
+            ctx.endServerSocket = true;
           } else {
             const resPromise = HttpResponse.nextOnSocket(serverSocket);
             ctx.req.pipe(serverSocket);
@@ -274,7 +274,7 @@ export const createProxy = (
         ctx.res.pipe(clientSocket);
 
         if (ctx.endServerSocket) {
-          internalOnServerSocketEnd()
+          internalOnServerSocketEnd();
         }
 
         if (ctx.res.isWebSocket()) {
@@ -292,6 +292,6 @@ export const createProxy = (
       }
     }
   };
-    
+
   return { use, connectionError, run };
 };

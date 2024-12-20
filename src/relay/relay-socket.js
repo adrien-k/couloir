@@ -2,7 +2,6 @@ import { COULOIR_STREAM, COULOIR_OPEN, COULOIR_JOIN } from "../protocol.js";
 import { htmlResponse, HttpRequest } from "../http.js";
 
 import CouloirClientSocket from "../couloir-client-socket.js";
-import { TYPE_CLIENT, TYPE_HOST } from "./relay-couloir.js";
 import logo from "../logo.js";
 
 export default class RelaySocket extends CouloirClientSocket {
@@ -19,16 +18,15 @@ export default class RelaySocket extends CouloirClientSocket {
     // True as soon as the socket is used for relaying
     this.bound = false;
 
+    this.log = this.relay.log.tags([this.ip, `#${this.id}`]);
     this.#listen();
   }
 
-  log(message, level) {
-    let prefix = "";
-    prefix += this.relay.verbose ? `[${this.ip}] ` : "";
-    prefix += this.relay.verbose ? `[#${this.id}] ` : "";
-    prefix += this.type ? `[${this.type}] ` : "";
-    prefix += this.host ? `[${this.host}] ` : "";
-    this.relay.log(`${prefix}${message}`, level);
+  setType(type, host) {
+    this.type = type;
+    this.host = host;
+    this.log = this.log.tags([type, host]);
+    this.log.info(`connected`);
   }
 
   proxy(hostSocket) {
@@ -42,7 +40,7 @@ export default class RelaySocket extends CouloirClientSocket {
     this.req.pipe(hostSocket.socket);
     this.socket.on("end", () => {
       hostSocket.socket.end();
-    })
+    });
   }
 
   async end({ force = false } = {}) {
@@ -55,17 +53,15 @@ export default class RelaySocket extends CouloirClientSocket {
 
   async #listen() {
     this.couloirProtocol.onMessage(COULOIR_OPEN, (payload) => {
-      this.type = TYPE_HOST;
       try {
-        const couloir = this.relay.openCouloir(payload);
-        this.host = couloir.host;
+        const couloir = this.relay.openCouloir(this, payload);
         return { key: couloir.key, host: couloir.host };
       } catch (e) {
         return { error: e.message };
       }
     });
 
-    this.couloirProtocol.onMessage(COULOIR_JOIN, ({key}, sendResponse) => {
+    this.couloirProtocol.onMessage(COULOIR_JOIN, ({ key }, sendResponse) => {
       const couloir = this.relay.getCouloir(key);
 
       if (couloir) {
@@ -77,8 +73,7 @@ export default class RelaySocket extends CouloirClientSocket {
       }
     });
 
-    if (!await this.couloirProtocol.isCouloir) {
-      this.type = TYPE_CLIENT;
+    if (!(await this.couloirProtocol.isCouloir)) {
       try {
         const req = await HttpRequest.nextOnSocket(this.stream);
         this.req = req;
@@ -90,8 +85,11 @@ export default class RelaySocket extends CouloirClientSocket {
           this.socket.write(
             htmlResponse(
               req.headers,
-              logo(`\n\n  To open a new couloir, run:\n  > ${this.relay.exposeCommand()}`, { center: false })
-            )
+              logo(
+                `\n\n  Open couloirs: ${Object.keys(this.relay.couloirs).length}\n\n  To open a new couloir, run:\n  > ${this.relay.exposeCommand()}`,
+                { center: false },
+              ),
+            ),
           );
           this.socket.end();
           return;
@@ -100,13 +98,9 @@ export default class RelaySocket extends CouloirClientSocket {
           this.relay.couloirs[host].addClientSocket(this);
         } else {
           this.socket.write(
-            htmlResponse(
-              req.headers,
-              logo(`404 - Couloir "${host}" is not open`),
-              {
-                status: "404 Not found",
-              }
-            )
+            htmlResponse(req.headers, logo(`404 - Couloir "${host}" is not open`), {
+              status: "404 Not found",
+            }),
           );
           this.socket.end();
         }

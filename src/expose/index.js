@@ -38,7 +38,7 @@ export default function expose(exposeOptions) {
       delete activeSockets[socket.id];
 
       if (throttled && !stopped) {
-        log("Throttled mode. Opening next relay socket before relay socket close.");
+        log.debug("Throttled mode. Opening next relay socket before relay socket close.");
         // When we reached the max number of sockets (throttled), we need to open a socket
         // as soon as one closes.
         // We open the next socket before the relay socket is closedto ensure we never fall
@@ -61,14 +61,16 @@ export default function expose(exposeOptions) {
     const activeSocketCount = Object.keys(activeSockets).length;
     throttled = activeSocketCount + pendingSockets >= maxConcurrency;
     if (throttled) {
-      return log(`Too many sockets. Skipping opening new socket.`);
+      return log.debug(`Too many sockets. Skipping opening new socket.`);
     }
 
-    log(`Opening relay socket (${activeSocketCount + 1}/${maxConcurrency})`);
+    log.debug(`Opening relay socket (${activeSocketCount + 1}/${maxConcurrency})`);
     pendingSockets++;
-    const socket = await ExposeSocket.create(exposeOptions).finally(() => {
+    relaySocketPromise = ExposeSocket.create(exposeOptions).finally(() => {
       pendingSockets--;
+      relaySocketPromise = null;
     });
+    const socket = await relaySocketPromise;
     activeSockets[socket.id] = socket;
 
     await joinCouloir(socket, couloirKey);
@@ -92,7 +94,7 @@ export default function expose(exposeOptions) {
   }
 
   const onSigInt = async () => {
-    log("Received SIGINT. Stopping...");
+    log.info("Received SIGINT. Stopping...");
     // We need to stop the open websocket, otherwise the couloir will remain open until they timeout
     await stop({ force: true });
     process.exit(0);
@@ -103,7 +105,7 @@ export default function expose(exposeOptions) {
     const relayUrl = new URL(`http://${host}:${relayPort}`);
     relayUrl.protocol = http ? "http" : "https";
     const hostUrl = new URL(`http://${localHost}:${localPort}`);
-    log(`\n>>> Couloir opened:\n\n${relayUrl} => ${hostUrl}\n`, "info", { raw: true});
+    log.raw(`\n>>> Couloir opened:\n\n${relayUrl} => ${hostUrl}\n`);
 
     process.on("SIGINT", onSigInt);
   };
@@ -114,7 +116,7 @@ export default function expose(exposeOptions) {
 
     await relaySocketPromise;
     for (const id of Object.keys(activeSockets)) {
-      log(`Closing socket ${id}`);
+      log.debug(`Closing socket ${id}`);
       await activeSockets[id].end();
     }
   };
