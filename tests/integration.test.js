@@ -4,6 +4,7 @@ import net from "node:net";
 import tls from "node:tls";
 import expose from "../src/expose/index.js";
 import relay from "../src/relay/index.js";
+import { loggerFactory } from "../src/logger.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "url";
 
@@ -41,7 +42,7 @@ async function waitUntil(condition, tries = 1) {
       throw e;
     }
     return new Promise((resolve, reject) =>
-      setTimeout(() => waitUntil(condition, tries + 1).then(resolve, reject), BIT_FLOW_DELAY)
+      setTimeout(() => waitUntil(condition, tries + 1).then(resolve, reject), BIT_FLOW_DELAY),
     );
   }
 }
@@ -53,20 +54,16 @@ function assertHttpEqual(req, head, body) {
 }
 
 let relayConfig, exposeConfig, logs, localServerReceived, responseCounter;
-/* eslint-disable no-console */
+const testBaseLogger = (msg) => {
+  /* eslint-disable-next-line no-console */
+  process.env.LOG === "true" ? console.log(msg) : logs.push(msg);
+};
+const baseLogger = {
+  error: testBaseLogger,
+  log: testBaseLogger,
+};
 const logFactory = (source) =>
-  (msg, level = "info") => {
-    const logMsg = `[${source}] ${level}: ${msg}`;
-    if (process.env.LOG === "true") {
-      console.log(logMsg);
-      if (msg instanceof Error) {
-        console.error(msg.stack);
-      }
-    } else {
-      logs.push(logMsg);
-    }
-  };
-/* eslint-enable no-console */
+  loggerFactory({ baseLogger, withTimestamp: false, verbose: true }).tags([source]);
 
 beforeEach(() => {
   logs = [];
@@ -113,18 +110,11 @@ let setup = async (
       }
     },
   },
-  testFn
+  testFn,
 ) => {
   const relayServer = relay(relayConfig);
   const localServer = net.createServer(onLocalConnection);
   const exposeServer = expose(exposeConfig);
-
-  await relayServer.start();
-  await exposeServer.start();
-  await new Promise((resolve, reject) => {
-    localServer.on("error", reject);
-    localServer.listen(LOCAL_PORT, resolve);
-  });
 
   const close = async () => {
     await exposeServer.stop();
@@ -133,6 +123,15 @@ let setup = async (
   };
 
   try {
+    await relayServer.start();
+    await exposeServer.start();
+    await new Promise((resolve, reject) => {
+      localServer.on("error", (e) => {
+        reject(e);
+      });
+      localServer.listen(LOCAL_PORT, resolve);
+    });
+
     await testFn({ relayServer, exposeServer, localServer });
     await close();
   } catch (e) {
@@ -172,7 +171,7 @@ it("tunnels http request/response from relay to local server and back", async ()
     assertHttpEqual(
       localServerReceived[0],
       "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n",
-      BINARY_BODY
+      BINARY_BODY,
     );
     assertHttpEqual(relayResponse, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n", BINARY_BODY);
   });
@@ -316,7 +315,7 @@ it("can handle multiple requests in the same socket", async () => {
     const response1 = await sendRelayRequest({ socket });
     assert.equal(
       localServerReceived[0].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo"
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
     );
     // assert.equal(
     //   localServerReceived[1].toString(),
@@ -326,7 +325,7 @@ it("can handle multiple requests in the same socket", async () => {
     const response2 = await sendRelayRequest({ socket });
     assert.equal(
       localServerReceived[1].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo"
+      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
     );
     assert.equal(response2.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2");
   });
@@ -348,9 +347,10 @@ describe("can protect the relay with a password", () => {
     } catch (e) {
       assert.equal(
         e.message,
-        "This Relay require a password. Use the --password <password> option."
+        "This Relay require a password. Use the --password <password> option.",
       );
     }
+    await exposeServer.stop();
     await relayServer.stop();
   });
 
@@ -366,6 +366,7 @@ describe("can protect the relay with a password", () => {
     } catch (e) {
       assert.equal(e.message, "Invalid Relay password.");
     }
+    await exposeServer.stop();
     await relayServer.stop();
   });
 
@@ -376,7 +377,6 @@ describe("can protect the relay with a password", () => {
 
     await relayServer.start();
     await exposeServer.start();
-
     await relayServer.stop();
     await exposeServer.stop();
   });
@@ -399,7 +399,7 @@ it("can work over TLS", async () => {
         () => {
           socketDataPromise(socket).then(resolve);
           socket.write(httpRequest);
-        }
+        },
       );
     });
 
@@ -411,7 +411,7 @@ it("closes the couloir when stopping the host", async () => {
   await setup({ keepAlive: true }, async ({ exposeServer }) => {
     assert.equal(
       (await sendRelayRequest()).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1"
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1",
     );
 
     await exposeServer.stop();
@@ -440,7 +440,7 @@ it("should not close the couloir when closing the last client socket", async () 
     // Check that the couloir is still opened
     assert.equal(
       (await sendRelayRequest()).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2"
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2",
     );
   });
 });
@@ -449,7 +449,7 @@ it("closes the expose proxy when stopping the relay", async () => {
   await setup({ keepAlive: true }, async ({ exposeServer, relayServer }) => {
     assert.equal(
       (await sendRelayRequest()).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1"
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1",
     );
     assert.equal(Object.keys(exposeServer.activeSockets).length, 1);
     await relayServer.stop({ force: true });
@@ -457,12 +457,12 @@ it("closes the expose proxy when stopping the relay", async () => {
   });
 });
 
-it.only("returns 502 when closing local server", async () => {
+it("returns 502 when closing local server", async () => {
   await setup({}, async ({ localServer }) => {
     const socket1 = await createRelayConnection();
     assert.equal(
       (await sendRelayRequest({ socket: socket1 })).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1"
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1",
     );
     await new Promise((r) => localServer.close(r));
     assert(socket1.destroyed);
@@ -470,7 +470,7 @@ it.only("returns 502 when closing local server", async () => {
     const socket2 = await createRelayConnection();
     assert.equal(
       (await sendRelayRequest({ socket: socket2 })).subarray(0, 24).toString(),
-      "HTTP/1.1 502 Bad Gateway"
+      "HTTP/1.1 502 Bad Gateway",
     );
     // It should also close the connection to ensure the next browser request will use a new one.
     assert(socket2.destroyed);

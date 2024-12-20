@@ -16,21 +16,13 @@ export default class ExposeSocket extends CouloirClientSocket {
     this.originalLog = log;
     this.joined = false;
     this.bound = false;
-
+    this.log = log.tags([`#${this.id}`]);
     socket.on("close", () => {
       if (this.joined && !this.bound) {
         // Only reason to close an unbound socket is if the relay is closing.
-        this.log("Relay is closing.", "info");
+        this.log.info("Relay is closing.");
       }
     });
-  }
-
-  log(message, level) {
-    let prefix = "";
-    if (this.verbose) {
-      prefix += `[#${this.id}] `;
-    }
-    this.originalLog(`${prefix}${message}`, level);
   }
 
   static async create(exposeOptions) {
@@ -50,10 +42,12 @@ export default class ExposeSocket extends CouloirClientSocket {
   }
 
   async end() {
-    await new Promise((r) => {
-      this.socket.end(r);
-    });
-    if (this.localSocket) {
+    if (!this.socket.destroyed) {
+      await new Promise((r) => {
+        this.socket.end(r);
+      });
+    }
+    if (this.localSocket && !this.localSocket.destroyed) {
       await new Promise((r) => {
         this.localSocket.end(r);
       });
@@ -74,7 +68,7 @@ export default class ExposeSocket extends CouloirClientSocket {
           onClientSocketEnd: async () => {
             if (!this.closedBy) {
               this.closedBy = "client";
-              this.log("Relay socket closed. Closing local server socket.");
+              this.log.debug("Relay socket closed. Closing local server socket.");
               await beforeClose();
             }
             this.localSocket.end();
@@ -82,7 +76,9 @@ export default class ExposeSocket extends CouloirClientSocket {
           onServerSocketEnd: async () => {
             if (!this.closedBy) {
               this.closedBy = "server";
-              this.log("Local server socket closing which will in turn close the relay socket.");
+              this.log.debug(
+                "Local server socket closing which will in turn close the relay socket.",
+              );
               await beforeClose();
             }
             this.socket.end();
@@ -101,26 +97,26 @@ export default class ExposeSocket extends CouloirClientSocket {
 
           accessLog += ` -> ${ctx.res.status} (${Date.now() - reqStart} ms)`;
 
-          this.log(accessLog, "info");
+          this.log.info(accessLog);
         });
 
         proxy.connectionError((ctx, err) => {
-          this.log("Unable to connect to local server.", "error");
-          this.log(err, "error");
+          this.log.error("Unable to connect to local server.");
+          this.log.error(err);
           ctx.res = HttpResponse.static(
             htmlResponse(
               ctx.req.headers,
               logo(
-                `502 - Unable to connect to your local server on ${this.localHost}:${this.localPort}`
+                `502 - Unable to connect to your local server on ${this.localHost}:${this.localPort}`,
               ),
-              { status: "502 Bad Gateway" }
-            )
+              { status: "502 Bad Gateway" },
+            ),
           );
         });
 
         proxy.run();
       },
-      { skipResponse: true }
+      { skipResponse: true },
     );
 
     await this.couloirProtocol.sendMessage(COULOIR_JOIN, { key: couloirKey });

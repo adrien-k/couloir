@@ -49,7 +49,9 @@ export default function relay({
 
       await relay.listen();
 
-      log(`\n>>> Relay server started on port ${relayPort}\n>>> Run '${relay.exposeCommand()}' to open a new couloir\n\n`, "info", { raw: true});
+      log.raw(
+        `\n>>> Relay server started on port ${relayPort}\n>>> Run '${relay.exposeCommand()}' to open a new couloir\n`,
+      );
     },
     stop: async ({ force = false } = {}) => {
       await certService?.stop();

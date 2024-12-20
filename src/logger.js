@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 export function timestamp() {
   const now = new Date();
   return [now.getHours(), now.getMinutes(), now.getSeconds()]
@@ -6,48 +5,60 @@ export function timestamp() {
     .join(":");
 }
 
-export function loggerFactory({ verbose = false, hide = [] } = {}) {
-  function log(msg, level = "debug", { raw = false } = {}) {
-    if (level === "debug" && !verbose) {
-      return;
+export function loggerFactory({
+  baseLogger = console,
+  withTimestamp = true,
+  verbose = false,
+  hide = [],
+} = {}) {
+  function createLogger({ tags = [] } = {}) {
+    function log(msg, level = "debug", { raw = false } = {}) {
+      if (level === "debug" && !verbose) {
+        return;
+      }
+
+      if (msg instanceof Error) {
+        msg = errorMessage(msg, { verbose });
+      }
+      for (const hidePattern of hide) {
+        const regex = new RegExp(hidePattern, "g");
+        msg = msg.replace(regex, "<HIDDEN>");
+      }
+
+      if (!raw) {
+        let prefix = "";
+
+        if (withTimestamp) {
+          prefix += `[${timestamp()}] `;
+        }
+
+        prefix += `${level}: `;
+
+        if (tags.length) {
+          prefix += tags.map((t) => `[${t}]`).join(" ") + " ";
+        }
+        msg = `${prefix}${msg}`;
+      }
+
+      if (level === "error" || level === "fatal" || level === "warn") {
+        baseLogger.error(msg);
+      } else {
+        baseLogger.log(msg);
+      }
     }
 
-    if (msg instanceof Error) {
-      msg = errorMessage(msg, { verbose });
-    }
-    for (const hidePattern of hide) {
-      const regex = new RegExp(hidePattern, "g");
-      msg = msg.replace(regex, "<HIDDEN>");
-    }
+    log.error = (msg) => log(msg, "error");
+    log.warn = (msg) => log(msg, "warn");
+    log.fatal = (msg) => log(msg, "fatal");
+    log.info = (msg) => log(msg, "info");
+    log.debug = (msg) => log(msg, "debug");
+    log.raw = (msg, level = "info") => log(msg, level, { raw: true });
+    log.tags = (newTags) => createLogger({ tags: [...tags, ...newTags] });
 
-    if (!raw) {
-      msg = `[${timestamp()}] ${level}: ${msg}`;
-    }
-    
-    if (level === "error" || level === "fatal" || level === "warn") {
-      console.error(msg);
-    } else {
-      console.log(msg);
-    }
-  };
-
-  log.error = (msg) => log(msg, "error");
-  log.warn = (msg) => log(msg, "warn");
-  log.fatal = (msg) => log(msg, "fatal");
-  log.info = (msg) => log(msg, "info");
-  log.debug = (msg) => log(msg, "debug");
-  log.raw = (msg, level = "info") => log(msg, level, { raw: true });
-
-  return log
-}
-
-export function defaultLogger(msg, level = "debug") {
-  const fullMessage = `[${timestamp()}] ${level}: ${msg}`;
-  if (level === "error" || level === "fatal" || level === "warn") {
-    console.error(fullMessage);
-  } else {
-    console.log(fullMessage);
+    return log;
   }
+
+  return createLogger();
 }
 
 export function errorMessage(err, { verbose = false } = {}) {
