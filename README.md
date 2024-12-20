@@ -43,7 +43,7 @@ sub.domain.com A 1.2.3.4
 *.sub.domain.com A 1.2.3.4
 ```
 
-3. Run the Couloir relay. The email option is required to request Let's Encrypt certificates.
+3. Run the Couloir relay:
 
 ```sh
 couloir relay sub.domain.com
