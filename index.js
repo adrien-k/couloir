@@ -13,12 +13,10 @@ import { settings, saveSetting } from "./src/config.js";
 function printConfig(argv) {
   const settingKeys = Object.keys(settings);
   if (settingKeys.length) {
-    argv.log(
+    argv.log.raw(
       `Using stored configuration:\n${settingKeys
         .map((k) => `- ${k}: ${settings[k]}`)
         .join("\n")}\n`,
-      "info",
-      { raw: true }
     );
   }
 }
@@ -35,8 +33,8 @@ yargs(hideBin(process.argv))
     relayPort: argv.relayPort || (argv.http ? 80 : 443),
     log: loggerFactory({ ...argv, hide: [argv.password] }),
   }))
-  .command("version", "Show the current version\n", () => {
-    console.log(version);
+  .command("version", "Show the current version\n", ({ argv }) => {
+    argv.log.raw(version);
   })
   .command(
     "relay <domain>",
@@ -68,25 +66,22 @@ yargs(hideBin(process.argv))
           describe:
             "Email used for Let's Encrypt cert generation, used to notify about expiration. Default is admin@<domain>.",
           type: "string",
-          default: settings["email"] || "admin@<domain>",
+          default: settings["email"],
         });
     },
     async (argv) => {
-      console.log(
-        logo(`Relay Server | Version ${version}`, { stdout: true, center: true }),
-      );
+      argv.log.raw(logo(`Relay Server | Version ${version}`, { stdout: true, center: true }));
       printConfig(argv);
 
       if (argv.password && argv.http) {
-        argv.log(
+        argv.log.raw(
           "Warning: password protection is not recommended in HTTP-only mode as the password will be sent in plain text to the relay. Use with caution.",
           "warn",
-          { raw: true }
         );
       }
 
       await relay(argv).start();
-    }
+    },
   )
   .command(
     ["expose <local-port>", "$0 <local-port>"],
@@ -135,10 +130,10 @@ yargs(hideBin(process.argv))
           type: "string",
         }),
     async (argv) => {
-      console.log(logo(`Host Server | Version ${version}`, { stdout: true, center: true }));
+      argv.log.raw(logo(`Host Server | Version ${version}`, { stdout: true, center: true }));
       printConfig(argv);
       await expose(argv).start();
-    }
+    },
   )
   .command(
     "set <config> [value]",
@@ -153,21 +148,24 @@ yargs(hideBin(process.argv))
         }),
     async (argv) => {
       saveSetting(argv.config, argv.value);
-      argv.log(`Setting "${argv.config}" saved. Settings:\n${JSON.stringify(settings, null, 2)}`, "info", { raw: true});
-    }
+      argv.log.raw(
+        `Setting "${argv.config}" saved. Settings:\n${JSON.stringify(settings, null, 2)}`,
+      );
+    },
   )
   .command(
     "unset <config>",
     "Unset the default config value",
     (yargs) =>
-      yargs
-        .positional("config", {
-          describe: "Setting to persist",
-        }),
+      yargs.positional("config", {
+        describe: "Setting to persist",
+      }),
     async (argv) => {
       saveSetting(argv.config);
-      argv.log(`Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(settings, null, 2)}`, "info", { raw: true});
-    }
+      argv.log.raw(
+        `Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(settings, null, 2)}`,
+      );
+    },
   )
   .option("verbose", {
     alias: "v",
@@ -176,12 +174,14 @@ yargs(hideBin(process.argv))
   })
   .demandCommand(1)
   .fail((msg, err, yargs) => {
-    const verbose = process.argv.includes("-v") || process.argv.includes("-verbose");
+    const verbose = process.argv.includes("-v") || process.argv.includes("--verbose");
     if (msg) {
+      /* eslint-disable no-console */
       console.log(yargs.help());
       console.error("\n" + msg);
     } else if (err) {
       console.error(errorMessage(err, { verbose }));
+      /* eslint-enable no-console */
     }
     process.exit(-1);
   })

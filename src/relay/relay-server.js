@@ -59,7 +59,7 @@ export class RelayServer {
   }
 
   removeCouloir(host) {
-    this.log(`Closing couloir "${host}"`, "info");
+    this.log.info(`Closing couloir "${host}"`);
     this.couloirs[host].beforeClose();
 
     delete this.couloirs[host];
@@ -70,7 +70,7 @@ export class RelayServer {
     }
   }
 
-  openCouloir({ host, password, version: clientVersion }) {
+  openCouloir(socket, { host, password, version: clientVersion }) {
     if (clientVersion && !equalVersions(clientVersion, version, "minor")) {
       throw new Error(
         `Client version (${clientVersion}) is not compatible with server version (${version}).`,
@@ -99,7 +99,7 @@ export class RelayServer {
 
     const couloir = (this.couloirs[host] = new RelayCouloir(this, host));
     this.keyToHost[couloir.key] = host;
-    this.log(`Couloir opened "${host}"`, "info");
+    socket.log.info(`Couloir opened "${host}"`);
 
     if (this.certService) {
       // Already start the let's encrypt cert generation.
@@ -126,7 +126,7 @@ export class RelayServer {
 
     const relaySocket = new RelaySocket(this, socket);
     this.sockets[relaySocket.id] = relaySocket;
-    relaySocket.log(`New connection`);
+    relaySocket.log.debug(`New connection`);
 
     const socketCleanup = () => {
       delete this.sockets[relaySocket.id];
@@ -137,13 +137,13 @@ export class RelayServer {
     };
 
     socket.on("close", () => {
-      relaySocket.log("disconnected");
+      relaySocket.log.debug("disconnected");
       socketCleanup();
     });
 
     socket.on("error", (err) => {
-      relaySocket.log("Error on relay socket", "error");
-      relaySocket.log(err, "error");
+      relaySocket.log.error("Error on relay socket");
+      relaySocket.log.error(err);
       socketCleanup();
     });
   }

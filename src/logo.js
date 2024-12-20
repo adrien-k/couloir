@@ -19,7 +19,7 @@ const centerFn =
     return " ".repeat(Math.max(0, space)) + text;
   };
 
-export default function logo(subtitle, { center = false, stdout = false } = {}) {
+export default function logo(subtitle, { center = true, stdout = false } = {}) {
   if (stdout && process.stdout.columns < newLine.length) {
     return `\n===== Couloir =====\n\n${subtitle}\n\n====================\n`;
   }
