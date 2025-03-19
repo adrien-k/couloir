@@ -51,6 +51,12 @@ export default class RelaySocket extends CouloirClientSocket {
     }
   }
 
+  /** 
+   * Handles TCP connections from either the relay server (ie: couloir connection) or from a 
+   * regular client using the proxy.
+   *
+   * The first chunk received over the socket will indicate the type of connection it is.
+   */
   async #listen() {
     this.couloirProtocol.onMessage(COULOIR_OPEN, (payload) => {
       try {
@@ -73,6 +79,9 @@ export default class RelaySocket extends CouloirClientSocket {
       }
     });
 
+    //
+    // Regular HTTP client using the proxy.
+    //
     if (!(await this.couloirProtocol.isCouloir)) {
       try {
         const req = await HttpRequest.nextOnSocket(this.stream);
