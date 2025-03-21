@@ -31,7 +31,7 @@ yargs(hideBin(process.argv))
   .middleware((argv) => ({
     ...argv,
     relayPort: argv.relayPort || (argv.http ? 80 : 443),
-    log: loggerFactory({ ...argv, hide: [argv.password] }),
+    log: loggerFactory({ ...argv, hide: argv.password?.length ? [argv.password] : [] }),
   }))
   .command("version", "Show the current version\n", ({ argv }) => {
     argv.log.raw(version);
