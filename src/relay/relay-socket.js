@@ -1,5 +1,6 @@
 import { COULOIR_STREAM, COULOIR_OPEN, COULOIR_JOIN } from "../protocol.js";
 import { htmlResponse, HttpRequest } from "../http.js";
+import { pipeWithQuota } from "../quota-tranform.js";
 
 import CouloirClientSocket from "../couloir-client-socket.js";
 import logo from "../logo.js";
@@ -32,12 +33,18 @@ export default class RelaySocket extends CouloirClientSocket {
   proxy(hostSocket) {
     this.bound = hostSocket.bound = true;
     hostSocket.couloirProtocol.sendMessage(COULOIR_STREAM, null, { skipResponse: true });
-    // We pipe the stream transformers as we are sure that:
-    // - they retain protocol-level information.
-    // - their data has not been consumed yet.
-    hostSocket.stream.pipe(this.socket);
-    // Pipe the current request and everything else that flows through the socket.
-    this.req.pipe(hostSocket.socket);
+
+    const onQuotaExceeded = () => {
+      this.socket.end();
+      this.relay.onRemoveSocket(this);
+      hostSocket.socket.end();
+      this.relay.onRemoveSocket(hostSocket);
+    };
+
+    pipeWithQuota(this.couloir, hostSocket.stream, this.socket, onQuotaExceeded);
+    // Use this.req instead of this.socket as it still holds the complete request stream
+    // whereas the socket has already been read to detect which type of client is connecting.
+    pipeWithQuota(this.couloir, this.req, hostSocket.socket, onQuotaExceeded);
     this.socket.on("end", () => {
       hostSocket.socket.end();
     });
@@ -51,19 +58,24 @@ export default class RelaySocket extends CouloirClientSocket {
     }
   }
 
-  /** 
-   * Handles TCP connections from either the relay server (ie: couloir connection) or from a 
+  /**
+   * Handles TCP connections from either the relay server (ie: couloir connection) or from a
    * regular client using the proxy.
    *
    * The first chunk received over the socket will indicate the type of connection it is.
    */
   async #listen() {
-    this.couloirProtocol.onMessage(COULOIR_OPEN, (payload) => {
+    this.couloirProtocol.onMessage(COULOIR_OPEN, async (payload) => {
       try {
-        const couloir = this.relay.openCouloir(this, payload);
+        const couloir = await this.relay.openCouloir(this, payload);
         return { key: couloir.key, host: couloir.host };
       } catch (e) {
-        return { error: e.message };
+        if (e.isUserError) {
+          return { error: e.message };
+        } else {
+          this.log.error(e);
+          return { error: "An error occurred while opening the couloir. Please try again later." };
+        }
       }
     });
 
@@ -71,7 +83,11 @@ export default class RelaySocket extends CouloirClientSocket {
       const couloir = this.relay.getCouloir(key);
 
       if (couloir) {
-        // Send the ACK already to ensure it goes out before the stream starts
+        if (couloir.quotaError) {
+          return { error: couloir.quotaError };
+        }
+        // Send the ACK already to ensure it goes out and the stream is being
+        // listened to before it starts sending data.
         sendResponse();
         couloir.addHostSocket(this);
       } else {
@@ -90,17 +106,35 @@ export default class RelaySocket extends CouloirClientSocket {
         // This removes the potential port that is part of the Host but not of how couloirs
         // are identified.
         const host = req.headers["Host"]?.[0]?.replace(/:.*$/, "");
+
         if (host && host === this.relay.domain) {
-          this.socket.write(
-            htmlResponse(
-              req.headers,
-              logo(
-                `\n\n  Open couloirs: ${Object.keys(this.relay.couloirs).length}\n\n  To open a new couloir, run:\n  > ${this.relay.exposeCommand()}`,
-                { center: false },
+          if (this.relay.controlApi.enabled()) {
+            // Open socket on control host and pipe the request to it.
+            const controlSocket = this.relay.controlApi.createSocket(() => {
+              req.pipe(controlSocket);
+              controlSocket.pipe(this.socket);
+            });
+            controlSocket.on("end", () => {
+              this.socket.end();
+            });
+            controlSocket.on("error", () => {
+              this.socket.write(
+                `HTTP/1.1 502 Bad Gateway\r\n\r\nService is temporarily unavailable. Please try again later.`,
+              );
+              this.socket.end();
+            });
+          } else {
+            this.socket.write(
+              htmlResponse(
+                req.headers,
+                logo(
+                  `\n\n  Open couloirs: ${Object.keys(this.relay.couloirs).length}\n\n  To open a new couloir, run:\n  > ${this.relay.exposeCommand()}`,
+                  { center: false },
+                ),
               ),
-            ),
-          );
-          this.socket.end();
+            );
+            this.socket.end();
+          }
           return;
         }
         if (host && this.relay.couloirs[host]) {

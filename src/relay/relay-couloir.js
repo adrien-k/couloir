@@ -1,17 +1,86 @@
 import crypto from "node:crypto";
 
+import UserError from "../user-error.js";
+
 export const TYPE_HOST = "host";
 export const TYPE_CLIENT = "client";
-
+// Only sync quota every 100k bytes
+const BYTES_BUFFER = 100000;
 export default class RelayCouloir {
-  constructor(relay, host) {
+  constructor(relay, { host, remainingQuota, controlApiCouloirClient }) {
+    this.openedAt = Date.now();
     this.relay = relay;
     this.host = host;
+
     this.hostsSockets = {};
     this.availableHosts = [];
     this.pendingClients = [];
     this.key = crypto.randomBytes(24).toString("hex");
     this.log = this.relay.log.tags([this.host]);
+    this.unsyncedBytes = 0;
+    this.remainingQuota = remainingQuota;
+    this.controlApiCouloirClient = controlApiCouloirClient;
+  }
+
+  static async init(relay, { couloirLabel, cliKey }) {
+    if (relay.controlApi.enabled() && !cliKey) {
+      throw new UserError(`Please provide a CLI key to use Couloir on ${relay.domain}`);
+    }
+
+    let remainingQuota, controlApiCouloirClient;
+    if (relay.controlApi.enabled()) {
+      const apiCouloir = await relay.controlApi.open({ cliKey, couloirLabel });
+      remainingQuota = apiCouloir.remaining_bytes;
+
+      if (remainingQuota < 0) {
+        throw new UserError(
+          `Your account has exceeded its data transfer limit. Please upgrade your plan on ${relay.url()} to continue using the service.`,
+        );
+      }
+
+      couloirLabel = apiCouloir.couloir;
+      controlApiCouloirClient = relay.controlApi.couloirControlClient(couloirLabel, cliKey);
+    }
+
+    const host = `${couloirLabel}.${relay.domain}`;
+
+    if (relay.couloirs[host] && relay.couloirs[host].isActive()) {
+      throw new UserError(`Couloir host ${host} is already opened`);
+    }
+
+    return new RelayCouloir(relay, { host, cliKey, remainingQuota, controlApiCouloirClient });
+  }
+
+  async syncQuota(tranferredBytes = null) {
+    if (!this.controlApiCouloirClient) {
+      return;
+    }
+
+    this.remainingQuota = await this.controlApiCouloirClient.syncUsage(tranferredBytes);
+
+    if (this.remainingQuota < 0) {
+      this.quotaError = `Your account has exceeded its data transfer limit. Please upgrade your plan on ${this.relay.url()} to continue using the service.`;
+    }
+  }
+
+  isActive() {
+    // Give 1 minute for a just-opened couloir to be active (ie: have a host socket)
+    if (this.openedAt < Date.now() - 1000 * 60) {
+      return true;
+    }
+
+    return Object.keys(this.hostsSockets).length > 0;
+  }
+
+  async updateQuota(bytes) {
+    this.unsyncedBytes += bytes;
+
+    // Update quota every 100k bytes
+    if (this.unsyncedBytes > BYTES_BUFFER) {
+      const bytes = this.unsyncedBytes;
+      this.unsyncedBytes = 0;
+      await this.syncQuota(bytes);
+    }
   }
 
   addHostSocket(socket) {
@@ -44,18 +113,18 @@ export default class RelayCouloir {
 
     if (Object.keys(this.hostsSockets).length === 0) {
       if (this.relay.stopped) {
-        this.relay.removeCouloir(this.host);
+        this.relay.removeCouloir(this);
         return;
       }
 
       const currentLastHostId = this.lastHostId;
       setTimeout(() => {
-        // We leave 500ms for the host server to initiate a new host socket.
+        // We leave 300ms for the host server to initiate a new host socket.
         // If no additional host joins in between we remove the couloir.
         if (this.lastHostId === currentLastHostId) {
-          this.relay.removeCouloir(this.host);
+          this.relay.removeCouloir(this);
         }
-      }, 500);
+      }, 300);
     }
   }
 
@@ -72,9 +141,7 @@ export default class RelayCouloir {
   }
 
   bindNextSocket() {
-    this.log.debug(
-      `Binding sockets clients:${this.pendingClients.length}, hosts: ${this.availableHosts.length}`,
-    );
+    this.log.debug(`Binding sockets clients:${this.pendingClients.length}, hosts: ${this.availableHosts.length}`);
     if (this.pendingClients.length && this.availableHosts.length) {
       const clientSocket = this.pendingClients.shift();
       const hostSocket = this.availableHosts.shift();
