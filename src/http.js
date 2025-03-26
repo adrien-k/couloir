@@ -1,5 +1,5 @@
 import { PassThrough } from "node:stream";
-
+import UserError from "./user-error.js";
 export function parseHttp(head) {
   const headLines = head.replace(/\r\n$/, "").split("\r\n");
   return { startLine: headLines[0], headers: parseHeaders(headLines.slice(1)) };
@@ -55,15 +55,26 @@ export function htmlResponse(reqHeaders, text, { status = "200 OK" } = {}) {
   if (reqHeaders.Accept?.[0]?.includes("text/html")) {
     const htmlText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const style = `
-    body { font-family: monospace; font-size: 1em; white-space: pre; }
-    @media (max-width: 750px) { body { font-size: 0.8em; }
-    @media (max-width: 520px) { body { font-size: 0.5em; }
+body { 
+  font-family: monospace; font-size: 1em; white-space: pre; 
+}
+@media (max-width: 750px) { 
+  body { font-size: 0.8rem; }
+}
+@media (max-width: 520px) { 
+  body { font-size: 0.5rem; }
+}
+.container { 
+  margin: 5rem; 
+  display: flex; 
+  justify-content: center; 
+}
 
     `;
     const html =
-      `<html><head><meta content="width=device-width, initial-scale=1" name="viewport" /><style>${style}</style></head><body>` +
+      `<html><head><meta content="width=device-width, initial-scale=1" name="viewport" /><style>${style}</style></head><body><div class="container">` +
       htmlText +
-      "</body></html>";
+      "</div></body></html>";
 
     return `HTTP/1.1 ${status}\r\nContent-Type: text/html\r\nContent-Length: ${html.length}\r\n\r\n${html}`;
   } else {
@@ -99,7 +110,7 @@ class HttpMessage {
 
     // We received a chunk that did not qualify as http head. Probably a protocol error.
     if (!this.headBuffer.indexOf("HTTP/") === -1) {
-      this.error = new Error("Invalid protocol, probably https over http-only relay.");
+      this.error = new UserError("Invalid protocol, probably https over http-only relay.");
       this.error.code = "INVALID_PROTOCOL";
 
       return;
@@ -138,8 +149,9 @@ class HttpMessage {
     toSocket = toSocket.socket || toSocket;
     const head = this.serializeHead();
     toSocket.write(head + "\r\n\r\n");
-    this.body.pipe(toSocket, { end: false });
     this.onEnd.push(() => this.body.unpipe(toSocket));
+
+    return this.body.pipe(toSocket, { end: false });
   }
 
   isWebSocket() {
@@ -201,11 +213,7 @@ function composeMiddleWares(middlewares) {
   };
 }
 // Simple Http proxy between two sockets with a middleware pattern inspired by Koa.
-export const createProxy = (
-  clientSocket,
-  serverSocket,
-  { end = true, onServerSocketEnd, onClientSocketEnd } = {},
-) => {
+export const createProxy = (clientSocket, serverSocket, { end = true, onServerSocketEnd, onClientSocketEnd } = {}) => {
   let open = true;
   let serverSocketError;
 
@@ -274,7 +282,10 @@ export const createProxy = (
         ctx.res.pipe(clientSocket);
 
         if (ctx.endServerSocket) {
-          internalOnServerSocketEnd();
+          open = false;
+          // This ensures the body stream is fully drained before closing the server socket.
+          ctx.res.body.on("end", internalOnServerSocketEnd);
+          ctx.res.body.end();
         }
 
         if (ctx.res.isWebSocket()) {

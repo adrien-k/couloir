@@ -1,12 +1,14 @@
-import { it, beforeEach, describe } from "node:test";
+import { it, beforeEach, before, after, describe } from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
 import tls from "node:tls";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "url";
+
 import expose from "../src/expose/index.js";
 import relay from "../src/relay/index.js";
 import { loggerFactory } from "../src/logger.js";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "url";
+import ControlApiMock from "./control-api-mock.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -16,6 +18,7 @@ const LOCAL_PORT = 30021;
 const BINARY_BODY = Buffer.from([0x80]); // non-utf8 character for fun
 const BIT_FLOW_DELAY = 50;
 
+// Reads all data from the socket until it stops receiving data for 50ms
 function socketDataPromise(socket) {
   return new Promise((resolve) => {
     let data = Buffer.from([]);
@@ -33,12 +36,14 @@ function socketDataPromise(socket) {
     socket.on("data", onData);
   });
 }
-
+const WAIT_UNTIL_MAX_TRIES = 10;
 async function waitUntil(condition, tries = 1) {
   try {
     condition();
   } catch (e) {
-    if (tries >= 4) {
+    if (tries >= WAIT_UNTIL_MAX_TRIES) {
+      // eslint-disable-next-line no-console
+      console.error(`Condition not met after ${WAIT_UNTIL_MAX_TRIES} tries`, e);
       throw e;
     }
     return new Promise((resolve, reject) =>
@@ -55,15 +60,17 @@ function assertHttpEqual(req, head, body) {
 
 let relayConfig, exposeConfig, logs, localServerReceived, responseCounter;
 const testBaseLogger = (msg) => {
-  /* eslint-disable-next-line no-console */
-  process.env.LOG === "true" ? console.log(msg) : logs.push(msg);
+  if (process.env.LOG === "true") {
+    /* eslint-disable-next-line no-console */
+    console.log(msg);
+  }
+  logs.push(msg);
 };
 const baseLogger = {
   error: testBaseLogger,
   log: testBaseLogger,
 };
-const logFactory = (source) =>
-  loggerFactory({ baseLogger, withTimestamp: false, verbose: true }).tags([source]);
+const logFactory = (source) => loggerFactory({ baseLogger, withTimestamp: false, verbose: true }).tags([source]);
 
 beforeEach(() => {
   logs = [];
@@ -88,7 +95,7 @@ beforeEach(() => {
   };
 });
 
-let setup = async (
+const setup = async (
   {
     httpResponse = () => `HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar${responseCounter++}`,
     keepAlive = false,
@@ -101,8 +108,10 @@ let setup = async (
       while (connected) {
         const data = await socketDataPromise(socket);
         localServerReceived.push(data);
-        socket.write(typeof httpResponse === "function" ? httpResponse() : httpResponse);
-        if (!keepAlive) {
+        if (socket.writable) {
+          socket.write(typeof httpResponse === "function" ? httpResponse() : httpResponse);
+        }
+        if (!socket.writable || !keepAlive) {
           connected = false;
           socket.end();
           socket.destroy();
@@ -135,11 +144,6 @@ let setup = async (
     await testFn({ relayServer, exposeServer, localServer });
     await close();
   } catch (e) {
-    // Showing verbose outuput for debugging failures
-    if (logs.length) {
-      // eslint-disable-next-line no-console
-      console.error(logs);
-    }
     await close();
     throw e;
   }
@@ -168,18 +172,13 @@ it("tunnels http request/response from relay to local server and back", async ()
     const relayResponse = await sendRelayRequest({ httpRequest });
 
     assert.equal(localServerReceived.length, 1);
-    assertHttpEqual(
-      localServerReceived[0],
-      "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n",
-      BINARY_BODY,
-    );
+    assertHttpEqual(localServerReceived[0], "GET / HTTP/1.1\r\nHost: couloir.test.local\r\n", BINARY_BODY);
     assertHttpEqual(relayResponse, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n", BINARY_BODY);
   });
 });
 
 it("can handle multiple sockets in series when reaching max maxConcurrency", async () => {
-  const httpRequest =
-    "GET / HTTP/1.1\r\nHost: couloir.test.local\r\nConnection: keep-alive\r\n\r\nfoo";
+  const httpRequest = "GET / HTTP/1.1\r\nHost: couloir.test.local\r\nConnection: keep-alive\r\n\r\nfoo";
   const httpResponse = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar";
 
   let localSockets = [];
@@ -313,20 +312,14 @@ it("can handle multiple requests in the same socket", async () => {
   await setup({ keepAlive: true }, async () => {
     const socket = await createRelayConnection();
     const response1 = await sendRelayRequest({ socket });
-    assert.equal(
-      localServerReceived[0].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
-    );
+    assert.equal(localServerReceived[0].toString(), "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo");
     // assert.equal(
     //   localServerReceived[1].toString(),
     //   "foo"
     // );
     assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
     const response2 = await sendRelayRequest({ socket });
-    assert.equal(
-      localServerReceived[1].toString(),
-      "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo",
-    );
+    assert.equal(localServerReceived[1].toString(), "GET / HTTP/1.1\r\nHost: my-other-domain\r\n\r\nfoo");
     assert.equal(response2.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2");
   });
 });
@@ -337,48 +330,28 @@ describe("can protect the relay with a password", () => {
   });
 
   it("reject when no password", async () => {
-    const relayServer = relay(relayConfig);
-    const exposeServer = expose(exposeConfig);
-
-    await relayServer.start();
     try {
-      await exposeServer.start();
-      assert.fail("Should throw an error");
+      await setup({}, async () => {});
+      assert.fail("Should not be reached");
     } catch (e) {
-      assert.equal(
-        e.message,
-        "This Relay require a password. Use the --password <password> option.",
-      );
+      assert.equal(e.message, "This Relay require a password. Use the --password <password> option.");
     }
-    await exposeServer.stop();
-    await relayServer.stop();
   });
 
   it("reject when bad password", async () => {
     exposeConfig.password = "bar";
-    const relayServer = relay(relayConfig);
-    const exposeServer = expose(exposeConfig);
 
-    await relayServer.start();
     try {
-      await exposeServer.start();
-      assert.fail("Should throw an error");
+      await setup({}, async () => {});
+      assert.fail("Should not be reached");
     } catch (e) {
       assert.equal(e.message, "Invalid Relay password.");
     }
-    await exposeServer.stop();
-    await relayServer.stop();
   });
 
   it("starts when good password", async () => {
     exposeConfig.password = "foo";
-    const relayServer = relay(relayConfig);
-    const exposeServer = expose(exposeConfig);
-
-    await relayServer.start();
-    await exposeServer.start();
-    await relayServer.stop();
-    await exposeServer.stop();
+    await setup({}, async () => {});
   });
 });
 
@@ -409,10 +382,7 @@ it("can work over TLS", async () => {
 
 it("closes the couloir when stopping the host", async () => {
   await setup({ keepAlive: true }, async ({ exposeServer }) => {
-    assert.equal(
-      (await sendRelayRequest()).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1",
-    );
+    assert.equal((await sendRelayRequest()).toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
 
     await exposeServer.stop();
     assert.equal((await sendRelayRequest()).subarray(0, 12).toString(), "HTTP/1.1 404");
@@ -438,19 +408,13 @@ it("should not close the couloir when closing the last client socket", async () 
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     // Check that the couloir is still opened
-    assert.equal(
-      (await sendRelayRequest()).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2",
-    );
+    assert.equal((await sendRelayRequest()).toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2");
   });
 });
 
 it("closes the expose proxy when stopping the relay", async () => {
   await setup({ keepAlive: true }, async ({ exposeServer, relayServer }) => {
-    assert.equal(
-      (await sendRelayRequest()).toString(),
-      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1",
-    );
+    assert.equal((await sendRelayRequest()).toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
     assert.equal(Object.keys(exposeServer.activeSockets).length, 1);
     await relayServer.stop({ force: true });
     assert.equal(Object.keys(exposeServer.activeSockets).length, 0);
@@ -469,8 +433,8 @@ it("returns 502 when closing local server", async () => {
 
     const socket2 = await createRelayConnection();
     assert.equal(
-      (await sendRelayRequest({ socket: socket2 })).subarray(0, 24).toString(),
-      "HTTP/1.1 502 Bad Gateway",
+      (await sendRelayRequest({ socket: socket2 })).subarray(0, 100).toString(),
+      "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: 629\r\n\r\n\n========================",
     );
     // It should also close the connection to ensure the next browser request will use a new one.
     assert(socket2.destroyed);
@@ -478,5 +442,134 @@ it("returns 502 when closing local server", async () => {
     await new Promise((r) => localServer.listen(LOCAL_PORT, r));
     // New socket
     assert.equal((await sendRelayRequest()).subarray(0, 15).toString(), "HTTP/1.1 200 OK");
+  });
+});
+
+describe("with a control API", () => {
+  const controlServer = new ControlApiMock();
+
+  beforeEach(async () => {
+    relayConfig.controlHost = "localhost";
+    relayConfig.controlPort = 30022;
+    relayConfig.controlApiKey = "relay-key";
+    exposeConfig.cliKey = "cli-key-ok";
+    controlServer.reset();
+    controlServer.setQuota("cli-key-ok", 500);
+    controlServer.setQuota("cli-key-ko", -500);
+  });
+
+  before(() => controlServer.listen(30022));
+
+  after(() => controlServer.close());
+
+  it("can proxy an http request through default couloir", async () => {
+    await setup({}, async () => {
+      const response = await sendRelayRequest({
+        httpRequest: "GET / HTTP/1.1\r\nHost: default-couloir.test.local\r\n\r\n",
+      });
+      assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+    });
+    assert.deepEqual(controlServer.receivedCouloirOpen, [
+      {
+        cli_token: "cli-key-ok",
+        label: null,
+      },
+    ]);
+  });
+
+  it("can proxy an http request through a specific couloir", async () => {
+    exposeConfig.name = "specific";
+    await setup({}, async () => {
+      const response = await sendRelayRequest({ httpRequest: "GET / HTTP/1.1\r\nHost: specific.test.local\r\n\r\n" });
+      assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+    });
+    assert.deepEqual(controlServer.receivedCouloirOpen, [
+      {
+        cli_token: "cli-key-ok",
+        label: "specific",
+      },
+    ]);
+  });
+
+  it("rejects missing cli key", async () => {
+    exposeConfig.cliKey = undefined;
+
+    try {
+      await setup({}, async () => {});
+      assert.fail("Should not be reached");
+    } catch (e) {
+      assert.equal(e.message, "Please provide a CLI key to use Couloir on test.local");
+    }
+  });
+
+  it("rejects wrong cli key", async () => {
+    exposeConfig.cliKey = "wrong-cli-key";
+
+    try {
+      await setup({}, async () => {});
+      assert.fail("Should not be reached");
+    } catch (e) {
+      assert.equal(e.message, "Invalid CLI key");
+    }
+  });
+
+  it("rejects when over quota", async () => {
+    exposeConfig.cliKey = "cli-key-ko";
+
+    try {
+      await setup({}, async () => {});
+      assert.fail("Should not be reached");
+    } catch (e) {
+      assert.equal(
+        e.message,
+        "Your account has exceeded its data transfer limit. Please upgrade your plan on http://test.local:30020/ to continue using the service.",
+      );
+    }
+  });
+
+  it.only("count bytes and interrupts when over quota", async () => {
+    await setup({}, async () => {
+      // Quota is synced every 100kB so we need to send at least that through the couloir
+      const httpRequestLarge = `GET / HTTP/1.1\r\nHost: default-couloir.test.local\r\n\r\n${"foofoobaar".repeat(10000)}`;
+      const socket = await createRelayConnection();
+      socket.write(httpRequestLarge);
+
+      // No response is expected as the request is interrupted in-flight
+      await waitUntil(() => assert.equal(controlServer.receivedCouloirSync.length, 1));
+      // Client socket is closed.
+      assert(socket.destroyed);
+
+      assert.deepEqual(controlServer.receivedCouloirOpen, [
+        {
+          cli_token: "cli-key-ok",
+          label: null,
+        },
+      ]);
+
+      assert.deepEqual(controlServer.receivedCouloirSync, [
+        {
+          cli_token: "cli-key-ok",
+          label: "default-couloir",
+          transferred_bytes: 100052,
+        },
+      ]);
+
+      await waitUntil(() =>
+        assert.deepEqual(controlServer.receivedCouloirClose, [
+          {
+            cli_token: "cli-key-ok",
+            label: "default-couloir",
+          },
+        ]),
+      );
+
+      await waitUntil(() =>
+        assert(
+          logs.includes(
+            "[ERROR] [expose] Error joining couloir: Your account has exceeded its data transfer limit. Please upgrade your plan on http://test.local:30020/ to continue using the service.",
+          ),
+        ),
+      );
+    });
   });
 });
