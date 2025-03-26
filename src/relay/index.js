@@ -1,8 +1,10 @@
+import { join } from "node:path";
+
 import { createCertServer } from "../certs.js";
 import { loggerFactory } from "../logger.js";
 import { RelayServer } from "./relay-server.js";
 import { CONFIG_DIR } from "../config.js";
-import { join } from "node:path";
+import ControlApi from "./control-api.js";
 
 export default function relay({
   verbose,
@@ -10,11 +12,14 @@ export default function relay({
   domain,
   http = false,
   email = `admin@${domain}`,
-  certsDirectory = join(CONFIG_DIR, "certs"),
+  certsDirectory = process.env.CERTS_DIRECTORY || join(CONFIG_DIR, "certs"),
   password,
+  controlHost = process.env.CONTROL_HOST,
+  controlPort = process.env.CONTROL_PORT,
+  controlApiKey = process.env.CONTROL_API_KEY,
   log = loggerFactory(),
 }) {
-  let relay, certService;
+  let certService;
   if (!http) {
     certService = createCertServer({
       certsDirectory,
@@ -22,11 +27,18 @@ export default function relay({
       email,
       domain,
       allowServername: (servername) =>
-        domain === servername || `couloir.${domain}` === servername || relay.couloirs[servername],
+        domain === servername || `${relay.hostPrefix}.${domain}` === servername || relay.couloirs[servername],
     });
   }
 
-  relay = new RelayServer({
+  const controlApi = new ControlApi({
+    log,
+    controlHost,
+    controlPort,
+    controlApiKey,
+  });
+
+  const relay = new RelayServer({
     http,
     relayPort,
     log,
@@ -34,10 +46,13 @@ export default function relay({
     domain,
     certService,
     password,
+    controlApi,
   });
 
   return {
     start: async () => {
+      await controlApi.init();
+
       if (certService) {
         // Already prepare a few certs cert for the main domain and first couloir
         // We don't wait for those requests to complete
@@ -53,6 +68,7 @@ export default function relay({
         `\n>>> Relay server started on port ${relayPort}\n>>> Run '${relay.exposeCommand()}' to open a new couloir\n`,
       );
     },
+
     stop: async ({ force = false } = {}) => {
       await certService?.stop();
       await relay.stop({ force });

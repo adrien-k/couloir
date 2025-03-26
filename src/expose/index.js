@@ -20,6 +20,7 @@ export default function expose(exposeOptions) {
     maxConcurrency = DEFAULT_MAX_CONCURRENCY,
     http = false,
     password,
+    cliKey,
     log = loggerFactory(),
   } = exposeOptions;
 
@@ -44,9 +45,7 @@ export default function expose(exposeOptions) {
         // We open the next socket before the relay socket is closedto ensure we never fall
         // to 0 active sockts which would close the couloir.
         throttled = false;
-        await openNextRelaySocket(couloirKey).catch(() => {
-          // Most likely the relay is stopped. We can ignore this error.
-        });
+        await openNextRelaySocket(couloirKey);
       }
     };
 
@@ -65,15 +64,25 @@ export default function expose(exposeOptions) {
     }
 
     log.debug(`Opening relay socket (${activeSocketCount + 1}/${maxConcurrency})`);
-    pendingSockets++;
-    relaySocketPromise = ExposeSocket.create(exposeOptions).finally(() => {
-      pendingSockets--;
-      relaySocketPromise = null;
-    });
-    const socket = await relaySocketPromise;
-    activeSockets[socket.id] = socket;
 
-    await joinCouloir(socket, couloirKey);
+    try {
+      pendingSockets++;
+      relaySocketPromise = ExposeSocket.create(exposeOptions).finally(() => {
+        pendingSockets--;
+        relaySocketPromise = null;
+      });
+      const socket = await relaySocketPromise;
+      activeSockets[socket.id] = socket;
+      await joinCouloir(socket, couloirKey);
+    } catch (error) {
+      // This may fail for multiple reasons:
+      // - Relay has been shut down.
+      // - Quota limit has been reached.
+      // Either way, we need to stop the couloir.
+
+      log.error(`Error joining couloir: ${error.message}`);
+      stop();
+    }
   }
 
   async function openCouloir() {
@@ -86,6 +95,7 @@ export default function expose(exposeOptions) {
       version,
       host: requestedCouloirHost,
       password,
+      cliKey,
     });
     activeSockets[socket.id] = socket;
     await joinCouloir(socket, key);
@@ -111,13 +121,17 @@ export default function expose(exposeOptions) {
   };
 
   const stop = async () => {
+    if (stopped) {
+      return;
+    }
+
     process.off("SIGINT", onSigInt);
     stopped = true;
 
     await relaySocketPromise;
     for (const id of Object.keys(activeSockets)) {
       log.debug(`Closing socket ${id}`);
-      await activeSockets[id].end();
+      await activeSockets[id]?.end();
     }
   };
 

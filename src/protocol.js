@@ -110,10 +110,11 @@ export class CouloirProtocolInterceptor extends Transform {
     }
 
     if (this.expectingAck && rest.length) {
-      this.logger.log.error(
+      const error = new Error(
         "Unexpected response from the relay.\nPlease check that you are connecting to a Couloir relay server and that it runs the same version.",
       );
-      process.exit(1);
+
+      return callback(error);
     }
 
     if (rest.length) {

@@ -30,6 +30,8 @@ const ALLOWED_SETTINGS = [
   "override-host",
   "password",
   "email",
+  "cli-key",
+  "name",
 ];
 const ALIAS_KEYS = {
   on: "relay-host",
@@ -42,9 +44,7 @@ export const saveSetting = (key, value) => {
   key = ALIAS_KEYS[key] || key;
 
   if (!ALLOWED_SETTINGS.includes(key)) {
-    throw new Error(
-      `Setting "${key}" is not allowed. Allowed settings are: ${ALLOWED_SETTINGS.join(", ")}`,
-    );
+    throw new Error(`Setting "${key}" is not allowed. Allowed settings are: ${ALLOWED_SETTINGS.join(", ")}`);
   }
 
   key = camelize(key);
