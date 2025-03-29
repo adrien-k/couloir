@@ -6,7 +6,7 @@ import RelayCouloir from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
 
 export class RelayServer {
-  constructor({ http, relayPort, log, verbose, domain, certService, password } = {}) {
+  constructor({ http, relayPort, log, verbose, domain, certService, password, controlApi } = {}) {
     this.http = http;
     this.relayPort = relayPort;
     this.log = log;
@@ -18,6 +18,11 @@ export class RelayServer {
     this.couloirs = {};
     this.sockets = {};
     this.keyToHost = {};
+    this.controlApi = controlApi;
+  }
+
+  url() {
+    return new URL(`http${this.https ? "s" : ""}://${this.domain}:${this.relayPort}`).toString();
   }
 
   exposeCommand() {
@@ -36,8 +41,8 @@ export class RelayServer {
 
   async listen() {
     const server = (this.server = this.http
-      ? net.createServer(this.#onSocket.bind(this))
-      : tls.createServer({ SNICallback: this.certService.SNICallback }, this.#onSocket.bind(this)));
+      ? net.createServer(this.#onConnection.bind(this))
+      : tls.createServer({ SNICallback: this.certService.SNICallback }, this.#onConnection.bind(this)));
 
     return new Promise((resolve, reject) => {
       server.on("error", reject);
@@ -53,9 +58,9 @@ export class RelayServer {
     for (const socket of Object.values(this.sockets)) {
       await socket.end({ force });
     }
-    await new Promise((r) => {
-      this.server.close(r);
-    });
+    if (this.server) {
+      await new Promise((r) => this.server.close(r));
+    }
   }
 
   removeCouloir(host) {
@@ -70,11 +75,9 @@ export class RelayServer {
     }
   }
 
-  openCouloir(socket, { host, password, version: clientVersion }) {
+  async openCouloir(socket, { host, password, version: clientVersion, cliKey }) {
     if (clientVersion && !equalVersions(clientVersion, version, "minor")) {
-      throw new Error(
-        `Client version (${clientVersion}) is not compatible with server version (${version}).`,
-      );
+      throw new Error(`Client version (${clientVersion}) is not compatible with server version (${version}).`);
     }
     if (!host.endsWith(`.${this.domain}`)) {
       host = `${this.hostPrefix}.${this.domain}`;
@@ -87,17 +90,22 @@ export class RelayServer {
 
     if (this.password && password !== this.password) {
       throw new Error(
-        password
-          ? "Invalid Relay password."
-          : "This Relay require a password. Use the --password <password> option.",
+        password ? "Invalid Relay password." : "This Relay require a password. Use the --password <password> option.",
       );
     }
 
-    if (this.couloirs[host]) {
+    if (this.couloirs[host] && this.couloirs[host].isActive()) {
       throw new Error(`Couloir host ${host} is already opened`);
     }
 
-    const couloir = (this.couloirs[host] = new RelayCouloir(this, host));
+    const couloir = new RelayCouloir(this, { host, cliKey });
+
+    await couloir.syncQuota();
+    if (couloir.quotaError) {
+      throw new Error(couloir.quotaError);
+    }
+
+    this.couloirs[host] = couloir;
     this.keyToHost[couloir.key] = host;
     socket.log.info(`Couloir opened "${host}"`);
 
@@ -115,7 +123,7 @@ export class RelayServer {
     return host && this.couloirs[host];
   }
 
-  #onSocket(socket) {
+  #onConnection(socket) {
     if (this.stopped) {
       socket.end();
       return;
@@ -136,6 +144,11 @@ export class RelayServer {
       }
     };
 
+    socket.on("end", () => {
+      relaySocket.log.debug("disconnected");
+      socketCleanup();
+    });
+
     socket.on("close", () => {
       relaySocket.log.debug("disconnected");
       socketCleanup();
@@ -144,6 +157,12 @@ export class RelayServer {
     socket.on("error", (err) => {
       relaySocket.log.error("Error on relay socket");
       relaySocket.log.error(err);
+      socketCleanup();
+    });
+
+    socket.on("timeout", () => {
+      relaySocket.log.debug("Timeout on relay socket");
+      socket.destroy();
       socketCleanup();
     });
   }

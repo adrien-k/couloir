@@ -2,22 +2,18 @@
 
 import yargs from "yargs/yargs";
 import { hideBin } from "yargs/helpers";
-import version from "./src/version.js";
+import version from "./version.js";
 
-import { loggerFactory, errorMessage } from "./src/logger.js";
-import relay from "./src/relay/index.js";
-import expose from "./src/expose/index.js";
-import logo from "./src/logo.js";
-import { settings, saveSetting } from "./src/config.js";
+import { loggerFactory, errorMessage } from "./logger.js";
+import relay from "./relay/index.js";
+import expose from "./expose/index.js";
+import logo from "./logo.js";
+import { settings, saveSetting } from "./config.js";
 
 function printConfig(argv) {
   const settingKeys = Object.keys(settings);
   if (settingKeys.length) {
-    argv.log.raw(
-      `Using stored configuration:\n${settingKeys
-        .map((k) => `- ${k}: ${settings[k]}`)
-        .join("\n")}\n`,
-    );
+    argv.log.raw(`Using stored configuration:\n${settingKeys.map((k) => `- ${k}: ${settings[k]}`).join("\n")}\n`);
   }
 }
 
@@ -57,9 +53,7 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Require a password to access the relay.${
-            settings["password"] ? "\n[default: <hidden>]" : ""
-          }`,
+          describe: `Require a password to access the relay.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
           type: "string",
         })
         .option("email", {
@@ -124,9 +118,11 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Password to access the relay, if required.${
-            settings["password"] ? "\n[default: <hidden>]" : ""
-          }`,
+          describe: `Password to access the relay, if required.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
+          type: "string",
+        })
+        .options("cli-key", {
+          describe: "CLI Key when using https://couloir.cloud",
           type: "string",
         }),
     async (argv) => {
@@ -148,9 +144,7 @@ yargs(hideBin(process.argv))
         }),
     async (argv) => {
       saveSetting(argv.config, argv.value);
-      argv.log.raw(
-        `Setting "${argv.config}" saved. Settings:\n${JSON.stringify(settings, null, 2)}`,
-      );
+      argv.log.raw(`Setting "${argv.config}" saved. Settings:\n${JSON.stringify(settings, null, 2)}`);
     },
   )
   .command(
@@ -162,9 +156,7 @@ yargs(hideBin(process.argv))
       }),
     async (argv) => {
       saveSetting(argv.config);
-      argv.log.raw(
-        `Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(settings, null, 2)}`,
-      );
+      argv.log.raw(`Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(settings, null, 2)}`);
     },
   )
   .option("verbose", {
