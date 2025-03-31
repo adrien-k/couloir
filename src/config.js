@@ -32,7 +32,7 @@ const ALLOWED_SETTINGS = [
   "override-host",
   "password",
   "email",
-  "cli-key",
+  "cli-token",
   "name",
 ];
 const ALIAS_KEYS = {

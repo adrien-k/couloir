@@ -81,7 +81,7 @@ export class RelayServer {
     }
   }
 
-  async openCouloir(socket, { couloirLabel, password, version: clientVersion, cliKey }) {
+  async openCouloir(socket, { couloirLabel, password, version: clientVersion, cliToken }) {
     if (clientVersion && !equalVersions(clientVersion, version, "minor")) {
       throw new UserError(`Client version (${clientVersion}) is not compatible with server version (${version}).`);
     }
@@ -100,7 +100,7 @@ export class RelayServer {
       );
     }
 
-    const couloir = await RelayCouloir.init(this, { couloirLabel, cliKey });
+    const couloir = await RelayCouloir.init(this, { couloirLabel, cliToken });
 
     this.couloirs[couloir.host] = couloir;
     this.keyToHost[couloir.key] = couloir.host;

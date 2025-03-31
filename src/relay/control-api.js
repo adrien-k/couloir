@@ -64,8 +64,8 @@ export default class ControlApi {
     return !!this.controlHost;
   }
 
-  couloirControlClient(couloirLabel, cliKey) {
-    return new CouloirControlClient(this, couloirLabel, cliKey);
+  couloirControlClient(couloirLabel, cliToken) {
+    return new CouloirControlClient(this, couloirLabel, cliToken);
   }
 
   createSocket(listener) {
@@ -95,19 +95,19 @@ export default class ControlApi {
     return jsonBody;
   }
 
-  async open({ cliKey, couloirLabel = null }) {
+  async open({ cliToken, couloirLabel = null }) {
     return this.handleCouloirResponse(() =>
       this.post("/api/v1/couloir/open", {
-        cli_token: cliKey,
+        cli_token: cliToken,
         label: couloirLabel,
       }),
     );
   }
 
-  async sync({ cliKey, couloirLabel, tranferredBytes }) {
+  async sync({ cliToken, couloirLabel, tranferredBytes }) {
     return this.handleCouloirResponse(() =>
       this.post("/api/v1/couloir/sync", {
-        cli_token: cliKey,
+        cli_token: cliToken,
         label: couloirLabel,
         transferred_bytes: tranferredBytes,
       }),
@@ -124,7 +124,7 @@ class CouloirControlClient {
 
   async syncUsage(tranferredBytes = null) {
     const { remaining_bytes } = await this.controlApi.sync({
-      cliKey: this.cliApiKey,
+      cliToken: this.cliApiKey,
       couloirLabel: this.couloirLabel,
       tranferredBytes,
     });
