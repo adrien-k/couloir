@@ -19,7 +19,7 @@ export default function expose(exposeOptions) {
     maxConcurrency = DEFAULT_MAX_CONCURRENCY,
     http = false,
     password,
-    cliKey,
+    cliToken,
     log = loggerFactory(),
   } = exposeOptions;
 
@@ -90,7 +90,7 @@ export default function expose(exposeOptions) {
       version,
       couloirLabel: name,
       password,
-      cliKey,
+      cliToken,
     });
     activeSockets[socket.id] = socket;
     await joinCouloir(socket, key);

@@ -13,9 +13,11 @@ Temporarily expose a http local service to the Internet using your own server.
 - **Encrypted**: traffic in and out of the relay is encrypted with auto-generated TLS certificates.
 - **Self-contained**: does not require anything else to work (SSH, Nginx, Caddy, ...).
 - **No configuration**: works out-of-the-box. Can be adjusted through a few CLI options.
-- Compatible with Websockets.
+- **Compatible with Websockets.**
 
-_This is still an alpha version so do not use it for anything too serious._
+[Host it yourself](#self-host-your-relay) by running your own relay server or [use our public relay](#using-couloircloud).
+
+Visit https://couloir.cloud for more information!
 
 ## Requirements
 
@@ -29,7 +31,29 @@ On both the relay server and your local machine. Make sure both versions match.
 npm install -g couloir
 ```
 
-## Usage
+## Using couloir.cloud
+
+1. Sign-in on https://couloir.cloud
+2. Copy your CLI token
+3. Configure your Couloir CLI
+
+```
+couloir set relay-host couloir.cloud
+couloir set cli-token <you CLI token>
+```
+
+### On your **local** machine
+
+1. Start your local http server, for example on port 3000.
+2. Run the local Couloir proxy:
+
+```sh
+couloir 3000
+```
+
+3. Open `https://<your subdomain>.couloir.cloud`
+
+## Self-host your relay
 
 ### On your **relay** machine (ex: a cheap VPS)
 

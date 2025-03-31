@@ -128,7 +128,7 @@ yargs(hideBin(process.argv))
           describe: `Password to access the relay, if required.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
           type: "string",
         })
-        .options("cli-key", {
+        .options("cli-token", {
           describe: "CLI Key when using https://couloir.cloud",
           type: "string",
         }),

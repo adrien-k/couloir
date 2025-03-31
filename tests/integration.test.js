@@ -452,10 +452,10 @@ describe("with a control API", () => {
     relayConfig.controlHost = "localhost";
     relayConfig.controlPort = 30022;
     relayConfig.controlApiKey = "relay-key";
-    exposeConfig.cliKey = "cli-key-ok";
+    exposeConfig.cliToken = "cli-token-ok";
     controlServer.reset();
-    controlServer.setQuota("cli-key-ok", 500);
-    controlServer.setQuota("cli-key-ko", -500);
+    controlServer.setQuota("cli-token-ok", 500);
+    controlServer.setQuota("cli-token-ko", -500);
   });
 
   before(() => controlServer.listen(30022));
@@ -471,7 +471,7 @@ describe("with a control API", () => {
     });
     assert.deepEqual(controlServer.receivedCouloirOpen, [
       {
-        cli_token: "cli-key-ok",
+        cli_token: "cli-token-ok",
         label: null,
       },
     ]);
@@ -485,14 +485,14 @@ describe("with a control API", () => {
     });
     assert.deepEqual(controlServer.receivedCouloirOpen, [
       {
-        cli_token: "cli-key-ok",
+        cli_token: "cli-token-ok",
         label: "specific",
       },
     ]);
   });
 
   it("rejects missing cli key", async () => {
-    exposeConfig.cliKey = undefined;
+    exposeConfig.cliToken = undefined;
 
     try {
       await setup({}, async () => {});
@@ -503,7 +503,7 @@ describe("with a control API", () => {
   });
 
   it("rejects wrong cli key", async () => {
-    exposeConfig.cliKey = "wrong-cli-key";
+    exposeConfig.cliToken = "wrong-cli-token";
 
     try {
       await setup({}, async () => {});
@@ -514,7 +514,7 @@ describe("with a control API", () => {
   });
 
   it("rejects when over quota", async () => {
-    exposeConfig.cliKey = "cli-key-ko";
+    exposeConfig.cliToken = "cli-token-ko";
 
     try {
       await setup({}, async () => {});
@@ -541,14 +541,14 @@ describe("with a control API", () => {
 
       assert.deepEqual(controlServer.receivedCouloirOpen, [
         {
-          cli_token: "cli-key-ok",
+          cli_token: "cli-token-ok",
           label: null,
         },
       ]);
 
       assert.deepEqual(controlServer.receivedCouloirSync, [
         {
-          cli_token: "cli-key-ok",
+          cli_token: "cli-token-ok",
           label: "default-couloir",
           transferred_bytes: 100052,
         },
@@ -557,7 +557,7 @@ describe("with a control API", () => {
       await waitUntil(() =>
         assert.deepEqual(controlServer.receivedCouloirClose, [
           {
-            cli_token: "cli-key-ok",
+            cli_token: "cli-token-ok",
             label: "default-couloir",
           },
         ]),

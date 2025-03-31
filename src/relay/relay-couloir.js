@@ -22,14 +22,14 @@ export default class RelayCouloir {
     this.controlApiCouloirClient = controlApiCouloirClient;
   }
 
-  static async init(relay, { couloirLabel, cliKey }) {
-    if (relay.controlApi.enabled() && !cliKey) {
+  static async init(relay, { couloirLabel, cliToken }) {
+    if (relay.controlApi.enabled() && !cliToken) {
       throw new UserError(`Please provide a CLI key to use Couloir on ${relay.domain}`);
     }
 
     let remainingQuota, controlApiCouloirClient;
     if (relay.controlApi.enabled()) {
-      const apiCouloir = await relay.controlApi.open({ cliKey, couloirLabel });
+      const apiCouloir = await relay.controlApi.open({ cliToken, couloirLabel });
       remainingQuota = apiCouloir.remaining_bytes;
 
       if (remainingQuota < 0) {
@@ -39,7 +39,7 @@ export default class RelayCouloir {
       }
 
       couloirLabel = apiCouloir.couloir;
-      controlApiCouloirClient = relay.controlApi.couloirControlClient(couloirLabel, cliKey);
+      controlApiCouloirClient = relay.controlApi.couloirControlClient(couloirLabel, cliToken);
     }
 
     const host = `${couloirLabel}.${relay.domain}`;
@@ -48,7 +48,7 @@ export default class RelayCouloir {
       throw new UserError(`Couloir host ${host} is already opened`);
     }
 
-    return new RelayCouloir(relay, { host, cliKey, remainingQuota, controlApiCouloirClient });
+    return new RelayCouloir(relay, { host, cliToken, remainingQuota, controlApiCouloirClient });
   }
 
   async syncQuota(tranferredBytes = null) {
