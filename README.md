@@ -39,14 +39,14 @@ npm install -g couloir
 ```
 # VPS IP being 1.2.3.4:
 
-sub.domain.com A 1.2.3.4
-*.sub.domain.com A 1.2.3.4
+mydomain.com A 1.2.3.4
+*.mydomain.com A 1.2.3.4
 ```
 
 3. Run the Couloir relay:
 
 ```sh
-couloir relay sub.domain.com
+couloir relay mydomain.com
 ```
 
 ### On your **local** machine
@@ -55,20 +55,20 @@ couloir relay sub.domain.com
 2. Run the local Couloir proxy:
 
 ```sh
-couloir 3000 --on sub.domain.com
+couloir 3000 --on mydomain.com
 ```
 
-3. Open `https://couloir.sub.domain.com`
+3. Open `https://couloir.mydomain.com`
 
 ## Recipes
 
 ### Custom Couloir subdomain
 
 You may want to choose your own subdomain name instead of "couloir".
-This will expose `bonjour.sub.domain.com`:
+This will expose `bonjour.mydomain.com`:
 
 ```sh
-couloir 3000 --on sub.domain.com --as bonjour
+couloir 3000 --on mydomain.com --as bonjour
 ```
 
 ### Protect the Relay with a password
@@ -80,10 +80,10 @@ being transmitted in clear over the TCP Socket._
 
 ```sh
 # On the relay
-couloir relay sub.domain.com --password foobar
+couloir relay mydomain.com --password foobar
 
 # On your local machine
-couloir 3000 --on sub.domain.com --password foobar
+couloir 3000 --on mydomain.com --password foobar
 ```
 
 ### Persist your relay settings for shorter commands.
@@ -92,7 +92,7 @@ Once you have configured a Relay you can save its configuration to not repeat it
 
 ```sh
 # On your local machine
-couloir set relay-host sub.domain.com
+couloir set relay-host mydomain.com
 couloir set password foobar
 ```
 
@@ -108,10 +108,10 @@ In this mode, you only need the relay port to be accessible from Internet (80 by
 
 ```sh
 # On the relay
-couloir relay sub.domain.com --http
+couloir relay mydomain.com --http
 
 # On your local machine
-couloir 3000 --on sub.domain.com --http
+couloir 3000 --on mydomain.com --http
 ```
 
 ### Run the relay on a different port
@@ -123,10 +123,10 @@ For example, port 3000:
 
 ```sh
 # On the relay
-couloir relay sub.domain.com --port 3000
+couloir relay mydomain.com --port 3000
 
 # On your local machine
-couloir 3000 --on sub.domain.com --relay-port 3000
+couloir 3000 --on mydomain.com --relay-port 3000
 ```
 
 ### Override the host header passed to your local server
@@ -135,7 +135,7 @@ This is useful if your local server is expecting a Host like 127.0.0.1:3000. For
 
 ```sh
 # On your local machine
-couloir 3000 --on sub.domain.com --override-host 127.0.0.1:3000
+couloir 3000 --on mydomain.com --override-host 127.0.0.1:3000
 ```
 
 ### Run the relay as a daemon with pm2
@@ -145,7 +145,7 @@ Install pm2 with `npm install -g pm2`.
 Then:
 
 ```sh
-pm2 start "couloir relay sub.domain.com" --name couloir
+pm2 start "couloir relay mydomain.com" --name couloir
 pm2 save
 # To have the daemon run on boot. Follow instructions.
 pm2 startup

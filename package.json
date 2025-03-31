@@ -1,6 +1,6 @@
 {
   "name": "couloir",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "main": "src/index.js",
   "bin": "./index.js",
   "author": "adrien-k",
@@ -25,5 +25,12 @@
     "eslint-config-prettier": "^10.1.1",
     "globals": "^15.14.0",
     "prettier": "^3.5.3"
-  }
+  },
+  "keywords": [
+    "proxy",
+    "tunnel",
+    "https-proxy",
+    "developer-tools",
+    "ngrok-alternative"
+  ]
 }
