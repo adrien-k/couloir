@@ -2,6 +2,8 @@ import os from "os";
 import { join } from "node:path";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
+import UserError from "./user-error.js";
+
 export const CONFIG_DIR = join(os.homedir(), ".couloir");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 
@@ -30,6 +32,8 @@ const ALLOWED_SETTINGS = [
   "override-host",
   "password",
   "email",
+  "cli-token",
+  "name",
 ];
 const ALIAS_KEYS = {
   on: "relay-host",
@@ -42,9 +46,7 @@ export const saveSetting = (key, value) => {
   key = ALIAS_KEYS[key] || key;
 
   if (!ALLOWED_SETTINGS.includes(key)) {
-    throw new Error(
-      `Setting "${key}" is not allowed. Allowed settings are: ${ALLOWED_SETTINGS.join(", ")}`,
-    );
+    throw new UserError(`Setting "${key}" is not allowed. Allowed settings are: ${ALLOWED_SETTINGS.join(", ")}`);
   }
 
   key = camelize(key);

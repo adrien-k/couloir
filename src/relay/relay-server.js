@@ -1,12 +1,13 @@
 import net from "node:net";
 import tls from "node:tls";
 
+import UserError from "../user-error.js";
 import RelaySocket from "./relay-socket.js";
 import RelayCouloir from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
 
 export class RelayServer {
-  constructor({ http, relayPort, log, verbose, domain, certService, password } = {}) {
+  constructor({ http, relayPort, log, verbose, domain, certService, password, controlApi } = {}) {
     this.http = http;
     this.relayPort = relayPort;
     this.log = log;
@@ -18,6 +19,11 @@ export class RelayServer {
     this.couloirs = {};
     this.sockets = {};
     this.keyToHost = {};
+    this.controlApi = controlApi;
+  }
+
+  url() {
+    return new URL(`http${this.https ? "s" : ""}://${this.domain}:${this.relayPort}`).toString();
   }
 
   exposeCommand() {
@@ -35,9 +41,11 @@ export class RelayServer {
   }
 
   async listen() {
-    const server = (this.server = this.http
-      ? net.createServer(this.#onSocket.bind(this))
-      : tls.createServer({ SNICallback: this.certService.SNICallback }, this.#onSocket.bind(this)));
+    const server = this.http
+      ? net.createServer(this.#onConnection.bind(this))
+      : tls.createServer({ SNICallback: this.certService.SNICallback }, this.#onConnection.bind(this));
+
+    this.server = server;
 
     return new Promise((resolve, reject) => {
       server.on("error", reject);
@@ -53,58 +61,55 @@ export class RelayServer {
     for (const socket of Object.values(this.sockets)) {
       await socket.end({ force });
     }
-    await new Promise((r) => {
-      this.server.close(r);
-    });
+
+    if (this.server) {
+      await new Promise((r) => this.server.close(r));
+    }
   }
 
-  removeCouloir(host) {
-    this.log.info(`Closing couloir "${host}"`);
-    this.couloirs[host].beforeClose();
+  removeCouloir(couloir) {
+    this.log.info(`Closing couloir "${couloir.label}"`);
+    couloir.controlApiCouloirClient?.close();
 
-    delete this.couloirs[host];
+    couloir.beforeClose();
+
+    delete this.couloirs[couloir.host];
     for (const key of Object.keys(this.keyToHost)) {
-      if (this.keyToHost[key] === host) {
+      if (this.keyToHost[key] === couloir.host) {
         delete this.keyToHost[key];
       }
     }
   }
 
-  openCouloir(socket, { host, password, version: clientVersion }) {
+  async openCouloir(socket, { couloirLabel, password, version: clientVersion, cliToken }) {
     if (clientVersion && !equalVersions(clientVersion, version, "minor")) {
-      throw new Error(
-        `Client version (${clientVersion}) is not compatible with server version (${version}).`,
-      );
+      throw new UserError(`Client version (${clientVersion}) is not compatible with server version (${version}).`);
     }
-    if (!host.endsWith(`.${this.domain}`)) {
-      host = `${this.hostPrefix}.${this.domain}`;
+    if (!this.controlApi.enabled() && !couloirLabel) {
+      couloirLabel = this.hostPrefix;
       let counter = 0;
-      while (this.couloirs[host]) {
+      while (this.couloirs[`${couloirLabel}.${this.domain}`]) {
         counter++;
-        host = `${this.hostPrefix}${counter}.${this.domain}`;
+        couloirLabel = `${this.hostPrefix}${counter}`;
       }
     }
 
     if (this.password && password !== this.password) {
-      throw new Error(
-        password
-          ? "Invalid Relay password."
-          : "This Relay require a password. Use the --password <password> option.",
+      throw new UserError(
+        password ? "Invalid Relay password." : "This Relay require a password. Use the --password <password> option.",
       );
     }
 
-    if (this.couloirs[host]) {
-      throw new Error(`Couloir host ${host} is already opened`);
-    }
+    const couloir = await RelayCouloir.init(this, { couloirLabel, cliToken });
 
-    const couloir = (this.couloirs[host] = new RelayCouloir(this, host));
-    this.keyToHost[couloir.key] = host;
-    socket.log.info(`Couloir opened "${host}"`);
+    this.couloirs[couloir.host] = couloir;
+    this.keyToHost[couloir.key] = couloir.host;
+    socket.log.info(`Couloir opened "${couloir.host}"`);
 
     if (this.certService) {
       // Already start the let's encrypt cert generation.
       // We don't await it on purpose
-      this.certService.getCertOnDemand(host);
+      this.certService.getCertOnDemand(couloir.host);
     }
 
     return couloir;
@@ -115,7 +120,14 @@ export class RelayServer {
     return host && this.couloirs[host];
   }
 
-  #onSocket(socket) {
+  onRemoveSocket(relaySocket) {
+    delete this.sockets[relaySocket.id];
+    if (relaySocket.couloir) {
+      relaySocket.couloir.removeSocket(relaySocket);
+    }
+  }
+
+  #onConnection(socket) {
     if (this.stopped) {
       socket.end();
       return;
@@ -128,23 +140,26 @@ export class RelayServer {
     this.sockets[relaySocket.id] = relaySocket;
     relaySocket.log.debug(`New connection`);
 
-    const socketCleanup = () => {
-      delete this.sockets[relaySocket.id];
-
-      if (relaySocket.couloir) {
-        relaySocket.couloir.removeSocket(relaySocket);
-      }
-    };
+    socket.on("end", () => {
+      relaySocket.log.debug("disconnected");
+      this.onRemoveSocket(relaySocket);
+    });
 
     socket.on("close", () => {
       relaySocket.log.debug("disconnected");
-      socketCleanup();
+      this.onRemoveSocket(relaySocket);
     });
 
     socket.on("error", (err) => {
       relaySocket.log.error("Error on relay socket");
       relaySocket.log.error(err);
-      socketCleanup();
+      this.onRemoveSocket(relaySocket);
+    });
+
+    socket.on("timeout", () => {
+      relaySocket.log.debug("Timeout on relay socket");
+      socket.destroy();
+      this.onRemoveSocket(relaySocket);
     });
   }
 }

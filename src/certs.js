@@ -7,6 +7,7 @@ import tls from "node:tls";
 import { join } from "node:path";
 import http from "node:http";
 import util from "node:util";
+import { X509Certificate } from "node:crypto";
 
 import * as acme from "acme-client";
 
@@ -39,6 +40,51 @@ async function findOrCreateKey(certsDirectory) {
   }
 }
 
+class Certificate {
+  static fromFile(keyFile, certFile) {
+    const cert = new Certificate();
+    cert.keyFile = keyFile;
+    cert.certFile = certFile;
+    return cert;
+  }
+
+  static fromString(key, cert) {
+    const c = new Certificate();
+    c.key = key;
+    c.cert = cert;
+    return c;
+  }
+
+  async save(certsDirectory, servername) {
+    if (!this.key || !this.cert) {
+      throw new Error("Cannot save an empty Certificate");
+    }
+
+    await ensureDir(certsDirectory);
+    const certDirectory = join(certsDirectory, servername);
+    await mkdir(certDirectory, { recursive: true });
+    await writeFile(join(certDirectory, "cert.key"), this.key);
+    await writeFile(join(certDirectory, "cert.pem"), this.cert);
+  }
+
+  async isValid() {
+    await this.ensureLoaded();
+    // Check if certificate expiry date is more than 24 hours in the future
+    return this.expiry > Date.now() + 1000 * 60 * 60 * 24;
+  }
+
+  async toArray() {
+    await this.ensureLoaded();
+    return [this.key, this.cert];
+  }
+
+  async ensureLoaded() {
+    this.key = this.key || (await readFile(this.keyFile));
+    this.cert = this.cert || (await readFile(this.certFile, "utf8"));
+    this.expiry = this.expiry || new Date(new X509Certificate(this.cert).validTo);
+  }
+}
+
 async function loadCertificates(certsDirectory) {
   await ensureDir(certsDirectory);
 
@@ -47,21 +93,10 @@ async function loadCertificates(certsDirectory) {
     const filePath = join(certsDirectory, file);
     const stat = await fsStat(filePath);
     if (stat.isDirectory()) {
-      certificateStore[file] = [
-        await readFile(join(filePath, "cert.key")),
-        await readFile(join(filePath, "cert.pem"), "utf8"),
-      ];
+      certificateStore[file] = Certificate.fromFile(join(filePath, "cert.key"), join(filePath, "cert.pem"));
     }
   }
   return certificateStore;
-}
-
-async function saveCertificate(certsDirectory, servername, key, cert) {
-  await ensureDir(certsDirectory);
-  const certDirectory = join(certsDirectory, servername);
-  await mkdir(certDirectory, { recursive: true });
-  await writeFile(join(certDirectory, "cert.key"), key);
-  await writeFile(join(certDirectory, "cert.pem"), cert);
 }
 
 async function createClient(certsDirectory) {
@@ -81,7 +116,6 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
 
   const pendingDomains = {};
   const challengeResponses = {};
-
   const certsPromise = loadCertificates(certsDirectory);
 
   /**
@@ -95,7 +129,9 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
     /* Certificate exists */
     for (const name of [servername, wildcardServername]) {
       if (certificateStore[name]) {
-        return certificateStore[name];
+        if (await certificateStore[name].isValid()) {
+          return certificateStore[name].toArray();
+        }
       }
     }
 
@@ -144,10 +180,10 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
 
     /* Done, store certificate */
     log.info(`Certificate for ${servername} created successfully`);
-    certificateStore[servername] = [key, cert];
-    await saveCertificate(certsDirectory, servername, key, cert);
+    certificateStore[servername] = Certificate.fromString(key, cert);
+    await certificateStore[servername].save(certsDirectory, servername);
     delete pendingDomains[servername];
-    return [key, cert];
+    return certificateStore[servername].toArray();
   }
 
   /**

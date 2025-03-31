@@ -2,32 +2,33 @@
 
 import yargs from "yargs/yargs";
 import { hideBin } from "yargs/helpers";
-import version from "./src/version.js";
+import version from "./version.js";
 
-import { loggerFactory, errorMessage } from "./src/logger.js";
-import relay from "./src/relay/index.js";
-import expose from "./src/expose/index.js";
-import logo from "./src/logo.js";
-import { settings, saveSetting } from "./src/config.js";
+import { loggerFactory, errorMessage } from "./logger.js";
+import relay from "./relay/index.js";
+import expose from "./expose/index.js";
+import logo from "./logo.js";
+import { settings, saveSetting } from "./config.js";
 
 function printConfig(argv) {
   const settingKeys = Object.keys(settings);
   if (settingKeys.length) {
-    argv.log.raw(
-      `Using stored configuration:\n${settingKeys
-        .map((k) => `- ${k}: ${settings[k]}`)
-        .join("\n")}\n`,
-    );
+    argv.log.raw(`Using stored configuration:\n${settingKeys.map((k) => `- ${k}: ${settings[k]}`).join("\n")}\n`);
   }
 }
 
 yargs(hideBin(process.argv))
   .scriptName("couloir")
   .version(false)
-  .middleware((argv) => ({
-    ...settings,
-    ...argv,
-  }))
+  .middleware((argv) => {
+    if (argv.ignoreConfig) {
+      return argv;
+    }
+    return {
+      ...settings,
+      ...argv,
+    };
+  })
   .middleware((argv) => ({
     ...argv,
     relayPort: argv.relayPort || (argv.http ? 80 : 443),
@@ -57,9 +58,7 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Require a password to access the relay.${
-            settings["password"] ? "\n[default: <hidden>]" : ""
-          }`,
+          describe: `Require a password to access the relay.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
           type: "string",
         })
         .option("email", {
@@ -71,7 +70,9 @@ yargs(hideBin(process.argv))
     },
     async (argv) => {
       argv.log.raw(logo(`Relay Server | Version ${version}`, { stdout: true, center: true }));
-      printConfig(argv);
+      if (!argv.ignoreConfig) {
+        printConfig(argv);
+      }
 
       if (argv.password && argv.http) {
         argv.log.raw(
@@ -124,14 +125,18 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Password to access the relay, if required.${
-            settings["password"] ? "\n[default: <hidden>]" : ""
-          }`,
+          describe: `Password to access the relay, if required.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
+          type: "string",
+        })
+        .options("cli-token", {
+          describe: "CLI Key when using https://couloir.cloud",
           type: "string",
         }),
     async (argv) => {
       argv.log.raw(logo(`Host Server | Version ${version}`, { stdout: true, center: true }));
-      printConfig(argv);
+      if (!argv.ignoreConfig) {
+        printConfig(argv);
+      }
       await expose(argv).start();
     },
   )
@@ -148,9 +153,7 @@ yargs(hideBin(process.argv))
         }),
     async (argv) => {
       saveSetting(argv.config, argv.value);
-      argv.log.raw(
-        `Setting "${argv.config}" saved. Settings:\n${JSON.stringify(settings, null, 2)}`,
-      );
+      argv.log.raw(`Setting "${argv.config}" saved. Settings:\n${JSON.stringify(settings, null, 2)}`);
     },
   )
   .command(
@@ -162,14 +165,17 @@ yargs(hideBin(process.argv))
       }),
     async (argv) => {
       saveSetting(argv.config);
-      argv.log.raw(
-        `Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(settings, null, 2)}`,
-      );
+      argv.log.raw(`Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(settings, null, 2)}`);
     },
   )
   .option("verbose", {
     alias: "v",
     type: "boolean",
+    default: false,
+  })
+  .option("ignore-config", {
+    type: "boolean",
+    describe: "Ignored any config previously set with `couloir set`",
     default: false,
   })
   .demandCommand(1)

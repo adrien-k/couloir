@@ -6,8 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const asciiLogo = fs.readFileSync(join(__dirname, "logo.txt"), "utf8");
-const newLine =
-  "===================================================================================";
+const newLine = "===================================================================================";
 
 const centerFn =
   (width, { textWidth } = {}) =>
