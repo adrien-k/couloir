@@ -1,16 +1,9 @@
 export function timestamp() {
   const now = new Date();
-  return [now.getHours(), now.getMinutes(), now.getSeconds()]
-    .map((n) => n.toString().padStart(2, "0"))
-    .join(":");
+  return [now.getHours(), now.getMinutes(), now.getSeconds()].map((n) => n.toString().padStart(2, "0")).join(":");
 }
 
-export function loggerFactory({
-  baseLogger = console,
-  withTimestamp = true,
-  verbose = false,
-  hide = [],
-} = {}) {
+export function loggerFactory({ baseLogger = console, withTimestamp = true, verbose = false, hide = [] } = {}) {
   function createLogger({ tags = [] } = {}) {
     function log(msg, level = "debug", { raw = false } = {}) {
       if (level === "debug" && !verbose) {
@@ -32,7 +25,9 @@ export function loggerFactory({
           prefix += `[${timestamp()}] `;
         }
 
-        prefix += `${level}: `;
+        if (level !== "info") {
+          prefix += `[${level.toUpperCase()}] `;
+        }
 
         if (tags.length) {
           prefix += tags.map((t) => `[${t}]`).join(" ") + " ";
@@ -67,5 +62,5 @@ export function errorMessage(err, { verbose = false } = {}) {
     // We only show the second error
     return errorMessage(err.errors[1], { verbose });
   }
-  return verbose ? err.stack : err.message;
+  return verbose ? err.stack : `Error: ${err.message}`;
 }
