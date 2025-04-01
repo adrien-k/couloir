@@ -389,6 +389,30 @@ it("closes the couloir when stopping the host", async () => {
   });
 });
 
+it("closes the couloir when hard-stopping the host", async () => {
+  relayConfig.hostSocketTimeout = 500;
+
+  await setup({ keepAlive: true }, async ({ exposeServer }) => {
+    assert.equal((await sendRelayRequest()).toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+
+    await exposeServer.stop({ hard: true });
+    await new Promise((resolve) => setTimeout(resolve, 1001));
+    assert.equal((await sendRelayRequest()).subarray(0, 12).toString(), "HTTP/1.1 404");
+  });
+});
+
+it("should not close the couloir on host socket timeout", async () => {
+  relayConfig.hostSocketTimeout = 500;
+
+  await setup({ keepAlive: true }, async () => {
+    assert.equal((await sendRelayRequest()).toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+
+    await new Promise((resolve) => setTimeout(resolve, 1001));
+
+    assert.equal((await sendRelayRequest()).subarray(0, 12).toString(), "HTTP/1.1 200");
+  });
+});
+
 it("should not close the couloir when closing the last client socket", async () => {
   await setup({ keepAlive: true }, async () => {
     const response = await new Promise((resolve, reject) => {
@@ -527,7 +551,7 @@ describe("with a control API", () => {
     }
   });
 
-  it.only("count bytes and interrupts when over quota", async () => {
+  it("count bytes and interrupts when over quota", async () => {
     await setup({}, async () => {
       // Quota is synced every 100kB so we need to send at least that through the couloir
       const httpRequestLarge = `GET / HTTP/1.1\r\nHost: default-couloir.test.local\r\n\r\n${"foofoobaar".repeat(10000)}`;
