@@ -5,9 +5,10 @@ import UserError from "../user-error.js";
 import RelaySocket from "./relay-socket.js";
 import RelayCouloir from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
+import { COULOIR_TIMEOUT } from "../protocol.js";
 
 export class RelayServer {
-  constructor({ http, relayPort, log, verbose, domain, certService, password, controlApi } = {}) {
+  constructor({ http, relayPort, log, verbose, domain, certService, password, controlApi, hostSocketTimeout } = {}) {
     this.http = http;
     this.relayPort = relayPort;
     this.log = log;
@@ -20,6 +21,7 @@ export class RelayServer {
     this.sockets = {};
     this.keyToHost = {};
     this.controlApi = controlApi;
+    this.hostSocketTimeout = hostSocketTimeout;
   }
 
   url() {
@@ -68,7 +70,7 @@ export class RelayServer {
   }
 
   removeCouloir(couloir) {
-    this.log.info(`Closing couloir "${couloir.label}"`);
+    this.log.info(`Closing couloir "${couloir.host}"`);
     couloir.controlApiCouloirClient?.close();
 
     couloir.beforeClose();
@@ -82,7 +84,8 @@ export class RelayServer {
   }
 
   async openCouloir(socket, { couloirLabel, password, version: clientVersion, cliToken }) {
-    if (clientVersion && !equalVersions(clientVersion, version, "minor")) {
+    // v0.6.x has a few protocol changes so we enforce patch-level equality
+    if (clientVersion && !equalVersions(clientVersion, version, "patch")) {
       throw new UserError(`Client version (${clientVersion}) is not compatible with server version (${version}).`);
     }
     if (!this.controlApi.enabled() && !couloirLabel) {
@@ -133,20 +136,21 @@ export class RelayServer {
       return;
     }
 
-    // Prevent dead sockets
-    socket.setKeepAlive(true, 30000);
+    // Prevent dead sockets when not closed properly
+    // by the client (no FIN or RST packets)
+    socket.setTimeout(this.hostSocketTimeout);
 
     const relaySocket = new RelaySocket(this, socket);
     this.sockets[relaySocket.id] = relaySocket;
     relaySocket.log.debug(`New connection`);
 
     socket.on("end", () => {
-      relaySocket.log.debug("disconnected");
+      relaySocket.log.debug("socket ended");
       this.onRemoveSocket(relaySocket);
     });
 
     socket.on("close", () => {
-      relaySocket.log.debug("disconnected");
+      relaySocket.log.debug("socket closed");
       this.onRemoveSocket(relaySocket);
     });
 
@@ -156,9 +160,17 @@ export class RelayServer {
       this.onRemoveSocket(relaySocket);
     });
 
-    socket.on("timeout", () => {
+    socket.on("timeout", async () => {
       relaySocket.log.debug("Timeout on relay socket");
-      socket.destroy();
+      if (!relaySocket.bound) {
+        try {
+          await relaySocket.couloirProtocol.sendMessage(COULOIR_TIMEOUT);
+        } catch (err) {
+          relaySocket.log.error("Error sending COULOIR_TIMEOUT message");
+          relaySocket.log.error(err);
+        }
+      }
+      socket.end();
       this.onRemoveSocket(relaySocket);
     });
   }
