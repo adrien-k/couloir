@@ -8,6 +8,7 @@ const COULOIR_MESSAGE_FIRST_BYTES = "COULOIR";
 export const COULOIR_OPEN = "COULOIR_OPEN";
 export const COULOIR_JOIN = "COULOIR_JOIN";
 export const COULOIR_STREAM = "COULOIR_STREAM";
+export const COULOIR_TIMEOUT = "COULOIR_TIMEOUT";
 
 export class CouloirProtocolInterceptor extends Transform {
   constructor(socket, logger) {
