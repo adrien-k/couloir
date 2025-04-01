@@ -18,6 +18,8 @@ export default function relay({
   controlPort = process.env.CONTROL_PORT,
   controlApiKey = process.env.CONTROL_API_KEY,
   log = loggerFactory(),
+  // After 60s of inactivity on a host socket, we close it to prevent orphan sockets
+  hostSocketTimeout = 60000,
 }) {
   let certService;
   if (!http) {
@@ -47,6 +49,7 @@ export default function relay({
     certService,
     password,
     controlApi,
+    hostSocketTimeout,
   });
 
   return {

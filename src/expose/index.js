@@ -2,6 +2,7 @@ import { COULOIR_OPEN } from "../protocol.js";
 import { loggerFactory } from "../logger.js";
 import ExposeSocket from "./expose-socket.js";
 import version from "../version.js";
+import { closeSync } from "fs";
 
 // This defines the number of concurrent socket connections opened with the relay
 // which in turn allows the relay to serve as many requests simultaneously.
@@ -115,7 +116,7 @@ export default function expose(exposeOptions) {
     process.on("SIGINT", onSigInt);
   };
 
-  const stop = async () => {
+  const stop = async ({ hard = false } = {}) => {
     if (stopped) {
       return;
     }
@@ -125,8 +126,20 @@ export default function expose(exposeOptions) {
 
     await relaySocketPromise;
     for (const id of Object.keys(activeSockets)) {
-      log.debug(`Closing socket ${id}`);
-      await activeSockets[id]?.end();
+      if (hard) {
+        const socket = activeSockets[id];
+        if (socket) {
+          // Close the socket file descriptor directly
+          log.debug(`Destroying socket file descriptor ${id}`);
+          if (socket._handle && socket._handle.fd) {
+            closeSync(socket._handle.fd);
+            socket._handle.fd = null; // Prevent accidental reuse
+          }
+        }
+      } else {
+        log.debug(`Closing socket ${id}`);
+        await activeSockets[id]?.end();
+      }
     }
   };
 

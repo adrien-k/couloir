@@ -2,7 +2,7 @@ import net from "node:net";
 import tls from "node:tls";
 
 import CouloirClientSocket from "../couloir-client-socket.js";
-import { COULOIR_STREAM, COULOIR_JOIN } from "../protocol.js";
+import { COULOIR_STREAM, COULOIR_JOIN, COULOIR_TIMEOUT } from "../protocol.js";
 import { createProxy, HttpResponse, htmlResponse } from "../http.js";
 import logo from "../logo.js";
 
@@ -21,7 +21,7 @@ export default class ExposeSocket extends CouloirClientSocket {
       this.log = this.log.tags([`#${this.id}`]);
     }
     socket.on("close", () => {
-      if (this.joined && !this.bound) {
+      if (this.joined && !this.bound && !this.timedOut) {
         // It is quite rate for the relay socket to be closed by the relay,
         // but can happen when:
         // - the relay server is shutting down
@@ -70,6 +70,15 @@ export default class ExposeSocket extends CouloirClientSocket {
   }
 
   async joinCouloir(couloirKey, { beforeStream, beforeClose }) {
+    this.couloirProtocol.onMessage(COULOIR_TIMEOUT, async () => {
+      this.timedOut = true;
+      this.log.debug("The couloir socket has timed out, recreating a new one before the couloir closes");
+      // Looks funky but we do as if that socket had been used for proxy and then got closed
+      // to keep the same socket lifecycle workflow as the common case (opening next socket, throttling etc).
+      // We can refactor later.
+      await beforeStream();
+      await beforeClose();
+    });
     this.couloirProtocol.onMessage(
       COULOIR_STREAM,
       async () => {
