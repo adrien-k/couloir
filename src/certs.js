@@ -107,6 +107,46 @@ async function createClient(certsDirectory) {
   });
 }
 
+export function createWildcardCertServer({ certFile, keyFile, log } = {}) {
+  log = log.tags(["Cert"]);
+
+  let secureContext;
+  let key, cert;
+
+  async function load() {
+    key = await readFile(keyFile);
+    cert = await readFile(certFile, "utf8");
+    secureContext = tls.createSecureContext({ key, cert });
+  }
+
+  const sniCallback = async (servername, cb) => {
+    try {
+      if (!secureContext) {
+        await load();
+      }
+      cb(null, secureContext);
+    } catch (e) {
+      log.error(`Failed to load wildcard certificate: ${e.message}`);
+      cb(e);
+    }
+  };
+
+  return {
+    start: async () => {
+      await load();
+      log.info(`Using wildcard TLS certificate from ${certFile}`);
+    },
+    stop: async () => {},
+    SNICallback: sniCallback,
+    getCertOnDemand: async () => {
+      if (!key || !cert) {
+        await load();
+      }
+      return [key, cert];
+    },
+  };
+}
+
 /**
  * Code inspired from https://github.com/publishlab/node-acme-client/blob/master/examples/http-01/http-01.js
  *
