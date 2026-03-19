@@ -111,29 +111,16 @@ export function createWildcardCertServer({ certFile, keyFile, log } = {}) {
   log = log.tags(["Cert"]);
 
   let secureContext;
-  let key, cert;
 
-  async function load() {
-    key = await readFile(keyFile);
-    cert = await readFile(certFile, "utf8");
-    secureContext = tls.createSecureContext({ key, cert });
-  }
-
-  const sniCallback = async (servername, cb) => {
-    try {
-      if (!secureContext) {
-        await load();
-      }
-      cb(null, secureContext);
-    } catch (e) {
-      log.error(`Failed to load wildcard certificate: ${e.message}`);
-      cb(e);
-    }
+  const sniCallback = (servername, cb) => {
+    cb(null, secureContext);
   };
 
   return {
     start: async () => {
-      await load();
+      const key = await readFile(keyFile);
+      const cert = await readFile(certFile, "utf8");
+      secureContext = tls.createSecureContext({ key, cert });
       log.info(`Using wildcard TLS certificate from ${certFile}`);
     },
     stop: async () => {},
