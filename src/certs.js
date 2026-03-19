@@ -138,12 +138,7 @@ export function createWildcardCertServer({ certFile, keyFile, log } = {}) {
     },
     stop: async () => {},
     SNICallback: sniCallback,
-    getCertOnDemand: async () => {
-      if (!key || !cert) {
-        await load();
-      }
-      return [key, cert];
-    },
+    getCertOnDemand: async () => {},
   };
 }
 
