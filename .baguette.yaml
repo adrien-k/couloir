@@ -1,0 +1,9 @@
+config:
+  session:
+    init: |
+      npm install
+    commands:
+      - label: Run tests
+        run: npm test
+      - label: Lint
+        run: npm run lint

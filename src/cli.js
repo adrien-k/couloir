@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import fs from "fs";
 import yargs from "yargs/yargs";
 import { hideBin } from "yargs/helpers";
 import version from "./version.js";
@@ -66,6 +67,32 @@ yargs(hideBin(process.argv))
             "Email used for Let's Encrypt cert generation, used to notify about expiration. Default is admin@<domain>.",
           type: "string",
           default: settings["email"],
+        })
+        .option("wildcard-cert", {
+          describe: "Path to a wildcard TLS certificate PEM file. Must be used together with --wildcard-key.",
+          type: "string",
+        })
+        .option("wildcard-key", {
+          describe: "Path to a wildcard TLS private key PEM file. Must be used together with --wildcard-cert.",
+          type: "string",
+        })
+        .check((argv) => {
+          const hasCert = !!argv.wildcardCert;
+          const hasKey = !!argv.wildcardKey;
+          if (hasCert !== hasKey) {
+            throw new Error("--wildcard-cert and --wildcard-key must be provided together.");
+          }
+          if (hasCert && argv.http) {
+            throw new Error("--wildcard-cert cannot be used with --http (TLS is disabled in HTTP mode).");
+          }
+          if (hasCert || hasKey) {
+            for (const [flag, file] of [["--wildcard-cert", argv.wildcardCert], ["--wildcard-key", argv.wildcardKey]]) {
+              if (!fs.existsSync(file)) {
+                throw new Error(`${flag}: file not found: ${file}`);
+              }
+            }
+          }
+          return true;
         });
     },
     async (argv) => {
