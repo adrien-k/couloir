@@ -9,9 +9,12 @@
   "repository": "github:adrien-k/couloir",
   "license": "ISC",
   "description": "simple http tunneling",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "acme-client": "^5.4.0",
-    "yargs": "^17.7.2"
+    "yargs": "^18.1.0"
   },
   "scripts": {
     "test": "NODE_EXTRA_CA_CERTS=./tests/certs/ca.pem node --test",
@@ -20,11 +23,11 @@
     "test:only": "npm test -- --test-only"
   },
   "devDependencies": {
-    "@eslint/js": "^9.23.0",
-    "eslint": "^9.23.0",
-    "eslint-config-prettier": "^10.1.1",
-    "globals": "^15.14.0",
-    "prettier": "^3.5.3"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.1",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.11.0",
+    "prettier": "^3.9.6"
   },
   "keywords": [
     "proxy",
