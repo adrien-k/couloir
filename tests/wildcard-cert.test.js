@@ -2,7 +2,6 @@ import { it, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import tls from "node:tls";
-import net from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "url";
 
@@ -24,7 +23,11 @@ const testBaseLogger = (msg) => {
     console.log(msg);
   }
 };
-const log = loggerFactory({ baseLogger: { error: testBaseLogger, log: testBaseLogger }, withTimestamp: false, verbose: true }).tags(["test"]);
+const log = loggerFactory({
+  baseLogger: { error: testBaseLogger, log: testBaseLogger },
+  withTimestamp: false,
+  verbose: true,
+}).tags(["test"]);
 
 describe("createWildcardCertServer", () => {
   it("starts and loads cert files successfully", async () => {

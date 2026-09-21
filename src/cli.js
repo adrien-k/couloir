@@ -86,7 +86,10 @@ yargs(hideBin(process.argv))
             throw new Error("--wildcard-cert cannot be used with --http (TLS is disabled in HTTP mode).");
           }
           if (hasCert || hasKey) {
-            for (const [flag, file] of [["--wildcard-cert", argv.wildcardCert], ["--wildcard-key", argv.wildcardKey]]) {
+            for (const [flag, file] of [
+              ["--wildcard-cert", argv.wildcardCert],
+              ["--wildcard-key", argv.wildcardKey],
+            ]) {
               if (!fs.existsSync(file)) {
                 throw new Error(`${flag}: file not found: ${file}`);
               }
