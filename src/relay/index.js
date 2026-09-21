@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { createCertServer } from "../certs.js";
+import { createCertServer, createWildcardCertServer } from "../certs.js";
 import { loggerFactory } from "../logger.js";
 import { RelayServer } from "./relay-server.js";
 import { CONFIG_DIR } from "../config.js";
@@ -13,6 +13,8 @@ export default function relay({
   http = false,
   email = `admin@${domain}`,
   certsDirectory = process.env.CERTS_DIRECTORY || join(CONFIG_DIR, "certs"),
+  wildcardCert,
+  wildcardKey,
   password,
   controlHost = process.env.CONTROL_HOST,
   controlPort = process.env.CONTROL_PORT,
@@ -23,14 +25,21 @@ export default function relay({
 }) {
   let certService;
   if (!http) {
-    certService = createCertServer({
-      certsDirectory,
-      log,
-      email,
-      domain,
-      allowServername: (servername) =>
-        domain === servername || `${relay.hostPrefix}.${domain}` === servername || relay.couloirs[servername],
-    });
+    if (wildcardCert || wildcardKey) {
+      if (!wildcardCert || !wildcardKey) {
+        throw new Error("Both --wildcard-cert and --wildcard-key must be provided together.");
+      }
+      certService = createWildcardCertServer({ certFile: wildcardCert, keyFile: wildcardKey, log });
+    } else {
+      certService = createCertServer({
+        certsDirectory,
+        log,
+        email,
+        domain,
+        allowServername: (servername) =>
+          domain === servername || `${relay.hostPrefix}.${domain}` === servername || relay.couloirs[servername],
+      });
+    }
   }
 
   const controlApi = new ControlApi({

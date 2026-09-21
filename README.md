@@ -174,3 +174,69 @@ pm2 save
 # To have the daemon run on boot. Follow instructions.
 pm2 startup
 ```
+
+### Use a wildcard certificate (skip on-the-fly cert generation)
+
+If you already have a wildcard TLS certificate for your domain, you can pass it directly to the relay instead of
+letting Couloir generate per-subdomain certificates on demand. This is useful when:
+
+- Port 80 is not available on your server.
+- You use a DNS-based ACME challenge (e.g. with [acme.sh](https://github.com/acmesh-official/acme.sh)) instead of HTTP-01.
+- You manage certificates externally and want full control over renewal.
+
+```sh
+couloir relay mydomain.com \
+  --wildcard-cert /path/to/fullchain.pem \
+  --wildcard-key  /path/to/privkey.pem
+```
+
+Both `--wildcard-cert` and `--wildcard-key` must be provided together. Port 80 is **not** required in this mode.
+
+#### Example: issue a wildcard cert with acme.sh and AWS Route53
+
+This uses the DNS-01 challenge via Route53 — no need to open port 80.
+
+1. **Install acme.sh**
+
+   ```sh
+   curl https://get.acme.sh | sh -s email=admin@mydomain.com
+   ```
+
+2. **Export your AWS credentials** (the IAM user needs `route53:ListHostedZones`, `route53:GetChange`, and
+   `route53:ChangeResourceRecordSets` on the hosted zone):
+
+   ```sh
+   export AWS_ACCESS_KEY_ID=AKIA...
+   export AWS_SECRET_ACCESS_KEY=...
+   ```
+
+3. **Issue the wildcard certificate**
+
+   ```sh
+   acme.sh --issue \
+     --dns dns_aws \
+     -d mydomain.com \
+     -d '*.mydomain.com'
+   ```
+
+4. **Install the certificate** to a location Couloir can read:
+
+   ```sh
+   acme.sh --install-cert \
+     -d mydomain.com \
+     --cert-file  /etc/couloir/cert.pem \
+     --key-file   /etc/couloir/privkey.pem \
+     --fullchain-file /etc/couloir/fullchain.pem \
+     --reloadcmd "pm2 restart couloir"
+   ```
+
+   The `--reloadcmd` restarts Couloir automatically whenever acme.sh renews the certificate (acme.sh sets up a
+   daily cron job for renewal).
+
+5. **Start the relay** pointing at the installed certificate:
+
+   ```sh
+   couloir relay mydomain.com \
+     --wildcard-cert /etc/couloir/fullchain.pem \
+     --wildcard-key  /etc/couloir/privkey.pem
+   ```
