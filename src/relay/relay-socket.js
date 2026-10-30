@@ -58,6 +58,31 @@ export default class RelaySocket extends CouloirClientSocket {
     }
   }
 
+  #pipeToControl(req) {
+    const controlSocket = this.relay.controlApi.createSocket(() => {
+      req.pipe(controlSocket);
+      controlSocket.pipe(this.socket);
+    });
+    controlSocket.on("end", () => {
+      this.socket.end();
+    });
+    controlSocket.on("error", () => {
+      this.socket.write(`HTTP/1.1 502 Bad Gateway\r\n\r\nService is temporarily unavailable. Please try again later.`);
+      this.socket.end();
+    });
+  }
+
+  #isCouloirSubdomainHost(host) {
+    if (!host || host === this.relay.domain) {
+      return false;
+    }
+    return host.endsWith(`.${this.relay.domain}`);
+  }
+
+  #isHealthCheckProbe(req) {
+    return (req.method === "GET" || req.method === "HEAD") && req.path === "/up";
+  }
+
   /**
    * Handles TCP connections from either the relay server (ie: couloir connection) or from a
    * regular client using the proxy.
@@ -109,20 +134,7 @@ export default class RelaySocket extends CouloirClientSocket {
 
         if (host && host === this.relay.domain) {
           if (this.relay.controlApi.enabled()) {
-            // Open socket on control host and pipe the request to it.
-            const controlSocket = this.relay.controlApi.createSocket(() => {
-              req.pipe(controlSocket);
-              controlSocket.pipe(this.socket);
-            });
-            controlSocket.on("end", () => {
-              this.socket.end();
-            });
-            controlSocket.on("error", () => {
-              this.socket.write(
-                `HTTP/1.1 502 Bad Gateway\r\n\r\nService is temporarily unavailable. Please try again later.`,
-              );
-              this.socket.end();
-            });
+            this.#pipeToControl(req);
           } else {
             this.socket.write(
               htmlResponse(
@@ -139,6 +151,14 @@ export default class RelaySocket extends CouloirClientSocket {
         }
         if (host && this.relay.couloirs[host]) {
           this.relay.couloirs[host].addClientSocket(this);
+        } else if (this.#isHealthCheckProbe(req) && !this.#isCouloirSubdomainHost(host)) {
+          this.log.debug("upstream health check GET /up");
+          if (this.relay.controlApi.enabled()) {
+            this.#pipeToControl(req);
+          } else {
+            this.socket.write(htmlResponse(req.headers, "couloir relay is up"));
+            this.socket.end();
+          }
         } else {
           this.socket.write(
             htmlResponse(req.headers, logo(`404 - Couloir "${host}" is not open`), {
