@@ -72,9 +72,15 @@ export default class RelaySocket extends CouloirClientSocket {
     });
   }
 
+  #isCouloirSubdomainHost(host) {
+    if (!host || host === this.relay.domain) {
+      return false;
+    }
+    return host.endsWith(`.${this.relay.domain}`);
+  }
+
   #isHealthCheckProbe(req) {
-    const userAgent = req.headers["User-Agent"]?.[0];
-    return (req.method === "GET" || req.method === "HEAD") && req.path === "/up" && userAgent === "kamal-proxy";
+    return (req.method === "GET" || req.method === "HEAD") && req.path === "/up";
   }
 
   /**
@@ -145,8 +151,8 @@ export default class RelaySocket extends CouloirClientSocket {
         }
         if (host && this.relay.couloirs[host]) {
           this.relay.couloirs[host].addClientSocket(this);
-        } else if (this.#isHealthCheckProbe(req)) {
-          this.log.debug("kamal-proxy health check probe");
+        } else if (this.#isHealthCheckProbe(req) && !this.#isCouloirSubdomainHost(host)) {
+          this.log.debug("upstream health check GET /up");
           if (this.relay.controlApi.enabled()) {
             this.#pipeToControl(req);
           } else {
