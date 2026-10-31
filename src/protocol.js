@@ -1,126 +1,148 @@
-import { Transform } from "node:stream";
-import EventEmitter from "node:events";
+import crypto from "node:crypto";
+import http from "node:http";
+import https from "node:https";
 
-const COULOIR_MATCHER = /^(?<key>COULOIR[ _][A-Z]+( ACK)?)( (?<payload>.*))?$/;
-const MESSAGE_SEPARATOR = "\r\n\r\n";
+import { getHeader } from "./http.js";
+import version from "./version.js";
 
-const COULOIR_MESSAGE_FIRST_BYTES = "COULOIR";
-export const COULOIR_OPEN = "COULOIR_OPEN";
-export const COULOIR_JOIN = "COULOIR_JOIN";
-export const COULOIR_STREAM = "COULOIR_STREAM";
-export const COULOIR_TIMEOUT = "COULOIR_TIMEOUT";
+export const COULOIR_OPEN_PATH = "/_couloir/open";
+export const COULOIR_JOIN_PATH = "/_couloir/join";
+export const COULOIR_WS_PROTOCOL = "couloir";
+export const COULOIR_KEY_HEADER = "X-Couloir-Key";
+export const COULOIR_VERSION_HEADER = "X-Couloir-Version";
 
-export class CouloirProtocolInterceptor extends Transform {
-  constructor(socket, logger) {
-    super();
-    this.logger = logger;
-    this.socket = socket;
-    this.protocolEvents = new EventEmitter();
-    this.firstChunk = true;
-    this.isCouloir = new Promise((resolve) => {
-      this.protocolEvents.once("is-couloir", resolve);
-    });
+const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+export function couloirPathname(path = "") {
+  return path.split("?")[0];
+}
+
+export function isCouloirControlPath(path) {
+  const pathname = couloirPathname(path);
+  return pathname === COULOIR_OPEN_PATH || pathname === COULOIR_JOIN_PATH;
+}
+
+export function websocketAcceptKey(secWebSocketKey) {
+  return crypto
+    .createHash("sha1")
+    .update(secWebSocketKey + WEBSOCKET_GUID)
+    .digest("base64");
+}
+
+export function jsonHttpResponse(status, statusMessage, body) {
+  const json = JSON.stringify(body);
+  return (
+    `HTTP/1.1 ${status} ${statusMessage}\r\n` +
+    `Content-Type: application/json\r\n` +
+    `Content-Length: ${Buffer.byteLength(json)}\r\n` +
+    `Connection: close\r\n` +
+    `\r\n` +
+    json
+  );
+}
+
+export function websocketUpgradeResponse(secWebSocketKey) {
+  return [
+    "HTTP/1.1 101 Switching Protocols",
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    `Sec-WebSocket-Accept: ${websocketAcceptKey(secWebSocketKey)}`,
+    `Sec-WebSocket-Protocol: ${COULOIR_WS_PROTOCOL}`,
+    "",
+    "",
+  ].join("\r\n");
+}
+
+export async function readHttpJsonBody(req) {
+  const length = parseInt(getHeader(req.headers, "Content-Length")?.[0] || "0", 10);
+  if (!length) {
+    return {};
   }
 
-  ackKey(key) {
-    return `${key} ACK`;
-  }
-
-  sendMessage(key, value = null, { skipResponse = false } = {}) {
-    let responsePromise;
-    if (!skipResponse) {
-      responsePromise = new Promise((resolve, reject) => {
-        this.expectingAck = true;
-
-        this.onMessage(
-          this.ackKey(key),
-          (response) => {
-            this.expectingAck = false;
-            this.socket.off("close", onClose);
-            if (response?.error) {
-              reject(new Error(response.error));
-            } else {
-              resolve(response);
-            }
-          },
-          { skipResponse: true },
-        );
-
-        const onClose = () => {
-          if (this.expectingAck) {
-            // This usually happens when the relay server is closed before the couloir was
-            // completly joins (mostly in tests)
-            reject("Relay connection closed prematurely", "info");
-          }
-        };
-
-        this.socket.on("close", onClose);
-      });
-    }
-
-    if (this.socket.writable) {
-      let msg = `${key}`;
-      msg += ` ${JSON.stringify(value)}`;
-      this.logger.log.debug(`Sending Couloir message: ${msg}`);
-      this.socket.write(`${msg}${MESSAGE_SEPARATOR}`);
-    }
-
-    return responsePromise;
-  }
-
-  onMessage(key, handler, { skipResponse = false } = {}) {
-    const handlerWithResponse = async (payload) => {
-      this.protocolEvents.off(key, handlerWithResponse);
-      const message = payload && JSON.parse(payload);
-      let responseSent = false;
-      const sendResponseOnce = (response) => {
-        if (!responseSent && !skipResponse) {
-          responseSent = true;
-          this.sendMessage(this.ackKey(key), response, { skipResponse: true });
-        }
-      };
-      const response = await handler(message, sendResponseOnce);
-      sendResponseOnce(response);
+  const buf = await new Promise((resolve, reject) => {
+    const chunks = [];
+    let received = 0;
+    const finish = () => {
+      req.body.off("data", onData);
+      req.body.off("error", onError);
+      resolve(Buffer.concat(chunks));
     };
-    this.protocolEvents.on("message", ({ key: messageKey, payload }) => {
-      if (key === messageKey) {
-        handlerWithResponse(payload);
+    const onData = (chunk) => {
+      chunks.push(chunk);
+      received += chunk.length;
+      if (received >= length) {
+        finish();
       }
+    };
+    const onError = (err) => reject(err);
+    req.body.on("data", onData);
+    req.body.on("error", onError);
+  });
+
+  return JSON.parse(buf.subarray(0, length).toString());
+}
+
+export function createRelayHttpRequest(exposeOptions, { method, path, headers = {} }) {
+  const { relayIp, relayHost, relayPort, http: httpOnly } = exposeOptions;
+  const lib = httpOnly ? http : https;
+  const opts = {
+    hostname: relayIp || relayHost,
+    port: relayPort,
+    method,
+    path,
+    headers: {
+      Host: relayHost,
+      ...headers,
+    },
+    agent: false,
+  };
+  if (!httpOnly) {
+    opts.servername = relayHost;
+  }
+  return lib.request(opts);
+}
+
+export function requestCouloirOpen(exposeOptions) {
+  const body = JSON.stringify({
+    version,
+    couloirLabel: exposeOptions.name,
+    password: exposeOptions.password,
+    cliToken: exposeOptions.cliToken,
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = createRelayHttpRequest(exposeOptions, {
+      method: "POST",
+      path: COULOIR_OPEN_PATH,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+        Connection: "close",
+        [COULOIR_VERSION_HEADER]: version,
+      },
     });
-  }
 
-  onNotCouloir(handler) {
-    this.protocolEvents.once("not-couloir", handler);
-  }
-
-  _transform(chunk, _encoding, callback) {
-    if (this.firstChunk) {
-      this.firstChunk = false;
-      this.protocolEvents.emit("is-couloir", chunk.indexOf("COULOIR") === 0);
-    }
-
-    let rest = chunk;
-    while (rest.indexOf(COULOIR_MESSAGE_FIRST_BYTES) === 0) {
-      const cutoff = rest.indexOf(MESSAGE_SEPARATOR);
-      const message = rest.subarray(0, cutoff).toString();
-      rest = rest.subarray(cutoff + 4);
-
-      this.logger.log.debug(`Received Couloir message: ${message}`);
-      const { key, payload } = COULOIR_MATCHER.exec(message).groups;
-      this.protocolEvents.emit("message", { key, payload });
-    }
-
-    if (this.expectingAck && rest.length) {
-      const error = new Error(
-        "Unexpected response from the relay.\nPlease check that you are connecting to a Couloir relay server and that it runs the same version.",
-      );
-
-      return callback(error);
-    }
-
-    if (rest.length) {
-      this.push(rest);
-    }
-    callback();
-  }
+    req.on("response", (res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const raw = Buffer.concat(chunks).toString();
+        let json;
+        try {
+          json = raw ? JSON.parse(raw) : {};
+        } catch {
+          reject(new Error(raw || `Open failed: ${res.statusCode}`));
+          return;
+        }
+        if (res.statusCode >= 400 || json.error) {
+          reject(new Error(json.error || `Open failed: ${res.statusCode}`));
+        } else {
+          resolve(json);
+        }
+      });
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
 }

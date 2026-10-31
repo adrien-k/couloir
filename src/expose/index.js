@@ -1,7 +1,6 @@
-import { COULOIR_OPEN } from "../protocol.js";
+import { requestCouloirOpen } from "../protocol.js";
 import { loggerFactory } from "../logger.js";
 import ExposeSocket from "./expose-socket.js";
-import version from "../version.js";
 import { closeSync } from "fs";
 
 // This defines the number of concurrent socket connections opened with the relay
@@ -49,10 +48,10 @@ export default function expose(exposeOptions) {
       }
     };
 
-    await socket.joinCouloir(couloirKey, { beforeStream, beforeClose });
+    await socket.joinCouloir({ beforeStream, beforeClose });
   }
 
-  async function openNextRelaySocket(couloirKey) {
+  async function openNextRelaySocket(couloirKey, { throwOnError = false } = {}) {
     if (stopped) {
       return;
     }
@@ -67,7 +66,7 @@ export default function expose(exposeOptions) {
 
     try {
       pendingSockets++;
-      relaySocketPromise = ExposeSocket.create(exposeOptions).finally(() => {
+      relaySocketPromise = ExposeSocket.create(exposeOptions, couloirKey).finally(() => {
         pendingSockets--;
         relaySocketPromise = null;
       });
@@ -82,19 +81,20 @@ export default function expose(exposeOptions) {
 
       log.error(`Error joining couloir: ${error.message}`);
       stop();
+      if (throwOnError) {
+        throw error;
+      }
     }
   }
 
   async function openCouloir() {
-    const socket = await ExposeSocket.create(exposeOptions);
-    const { host, key } = await socket.couloirProtocol.sendMessage(COULOIR_OPEN, {
-      version,
-      couloirLabel: name,
+    const { host, key } = await requestCouloirOpen({
+      ...exposeOptions,
+      name,
       password,
       cliToken,
     });
-    activeSockets[socket.id] = socket;
-    await joinCouloir(socket, key);
+    await openNextRelaySocket(key, { throwOnError: true });
 
     return host;
   }

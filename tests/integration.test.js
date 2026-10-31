@@ -1,5 +1,6 @@
 import { it, beforeEach, before, after, describe } from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import net from "node:net";
 import tls from "node:tls";
 import { dirname, join } from "node:path";
@@ -9,6 +10,8 @@ import expose from "../src/expose/index.js";
 import relay from "../src/relay/index.js";
 import { loggerFactory } from "../src/logger.js";
 import ControlApiMock from "./control-api-mock.js";
+import version from "../src/version.js";
+import { COULOIR_WS_PROTOCOL, websocketAcceptKey } from "../src/protocol.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -56,6 +59,15 @@ function assertHttpEqual(req, head, body) {
   const endOfHead = req.indexOf("\r\n\r\n");
   assert.equal(req.toString("utf8", 0, endOfHead + 2), head);
   assert.equal(req.toString("hex", endOfHead + 4), body.toString("hex"));
+}
+
+function parseHttpJson(data) {
+  const text = data.toString();
+  const endOfHead = text.indexOf("\r\n\r\n");
+  const startLine = text.slice(0, text.indexOf("\r\n"));
+  const status = Number(startLine.split(" ")[1]);
+  const body = text.slice(endOfHead + 4);
+  return { status, startLine, body: body ? JSON.parse(body) : null };
 }
 
 let relayConfig, exposeConfig, logs, localServerReceived, responseCounter;
@@ -466,6 +478,88 @@ it("returns 502 when closing local server", async () => {
     await new Promise((r) => localServer.listen(LOCAL_PORT, r));
     // New socket
     assert.equal((await sendRelayRequest()).subarray(0, 15).toString(), "HTTP/1.1 200 OK");
+  });
+});
+
+describe("HTTP control protocol", () => {
+  async function withRelay(fn) {
+    const relayServer = relay(relayConfig);
+    await relayServer.start();
+    try {
+      await fn(relayServer);
+    } finally {
+      await relayServer.stop({ force: true });
+    }
+  }
+
+  async function openCouloirHttp({ couloirLabel = "couloir", extra = {} } = {}) {
+    const socket = await createRelayConnection();
+    const body = JSON.stringify({ version, couloirLabel, ...extra });
+    socket.write(
+      `POST /_couloir/open HTTP/1.1\r\nHost: test.local\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+    );
+    return parseHttpJson(await socketDataPromise(socket));
+  }
+
+  it("opens a couloir with POST /_couloir/open", async () => {
+    await withRelay(async () => {
+      const { status, body } = await openCouloirHttp();
+      assert.equal(status, 200);
+      assert.equal(body.host, "couloir.test.local");
+      assert.equal(typeof body.key, "string");
+    });
+  });
+
+  it("rejects open without a matching client version", async () => {
+    await withRelay(async () => {
+      const { status, body } = await openCouloirHttp({ extra: { version: "0.0.0" } });
+      assert.equal(status, 400);
+      assert.match(body.error, /not compatible with server version/);
+    });
+  });
+
+  it("joins a couloir with a WebSocket upgrade", async () => {
+    await withRelay(async () => {
+      const { body: opened } = await openCouloirHttp();
+      const wsKey = crypto.randomBytes(16).toString("base64");
+      const socket = await createRelayConnection();
+      socket.write(
+        `GET /_couloir/join HTTP/1.1\r\n` +
+          `Host: test.local\r\n` +
+          `Connection: Upgrade\r\n` +
+          `Upgrade: websocket\r\n` +
+          `Sec-WebSocket-Version: 13\r\n` +
+          `Sec-WebSocket-Key: ${wsKey}\r\n` +
+          `Sec-WebSocket-Protocol: ${COULOIR_WS_PROTOCOL}\r\n` +
+          `X-Couloir-Key: ${opened.key}\r\n\r\n`,
+      );
+      const response = (await socketDataPromise(socket)).toString();
+      assert.match(response, /^HTTP\/1.1 101 Switching Protocols/);
+      assert.match(response, /Upgrade: websocket/i);
+      assert.ok(response.includes(`Sec-WebSocket-Accept: ${websocketAcceptKey(wsKey)}`));
+      assert.match(response, /Sec-WebSocket-Protocol: couloir/);
+    });
+  });
+
+  it("responds to GET /up on the apex host", async () => {
+    await withRelay(async () => {
+      const response = await sendRelayRequest({
+        httpRequest: "GET /up HTTP/1.1\r\nHost: test.local\r\n\r\n",
+      });
+      assert.match(response.toString(), /^HTTP\/1.1 200/);
+      assert.match(response.toString(), /couloir relay is up/);
+    });
+  });
+});
+
+it("tunnels /_couloir paths on a couloir subdomain to the local server", async () => {
+  await setup({}, async () => {
+    const response = await sendRelayRequest({
+      httpRequest: "GET /_couloir/open HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo",
+    });
+    assert.equal(localServerReceived.length, 1);
+    assert.match(localServerReceived[0].toString(), /^GET \/_couloir\/open HTTP\/1.1/);
+    assert.match(response.toString(), /^HTTP\/1.1 200/);
   });
 });
 
