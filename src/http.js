@@ -27,6 +27,18 @@ function parseHeaders(headerLines) {
   return headers;
 }
 
+export function getHeader(headers, name) {
+  if (!headers) {
+    return;
+  }
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) {
+      return headers[key];
+    }
+  }
+}
+
 export function parseReqHead(head) {
   const { startLine, headers } = parseHttp(head);
   const [method, path, version] = startLine.split(" ");
@@ -155,7 +167,7 @@ class HttpMessage {
   }
 
   isWebSocket() {
-    return this.headers && this.headers["Upgrade"]?.[0]?.toLowerCase() === "websocket";
+    return this.headers && getHeader(this.headers, "Upgrade")?.[0]?.toLowerCase() === "websocket";
   }
 
   /**
