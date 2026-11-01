@@ -166,7 +166,7 @@ export class RelayServer {
 
     socket.on("timeout", () => {
       relaySocket.log.debug("Timeout on relay socket");
-      if (relaySocket.type === TYPE_HOST && !relaySocket.bound) {
+      if (relaySocket.type === TYPE_HOST) {
         relaySocket.removedForIdleTimeout = true;
       }
       socket.end();

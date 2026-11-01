@@ -87,6 +87,7 @@ export default class RelayCouloir {
     socket.couloir = this;
     socket.setType(TYPE_HOST, this.host);
     this.lastHostId = socket.id;
+    this.hadIdleTimeoutRemoval = false;
 
     this.hostsSockets[socket.id] = socket;
     this.availableHosts.push(socket);
@@ -108,6 +109,10 @@ export default class RelayCouloir {
       return; // Already removed
     }
 
+    if (socket.removedForIdleTimeout) {
+      this.hadIdleTimeoutRemoval = true;
+    }
+
     delete this.hostsSockets[socket.id];
     this.availableHosts = this.availableHosts.filter((s) => s.id !== socket.id);
 
@@ -118,7 +123,9 @@ export default class RelayCouloir {
       }
 
       const currentLastHostId = this.lastHostId;
-      const graceMs = socket.removedForIdleTimeout && this.relay.hostSocketTimeout ? this.relay.hostSocketTimeout : 300;
+      // Idle timeouts (spare or bound) share one couloir-level flag so a later
+      // unflagged removal cannot restart a 300ms countdown over a longer grace.
+      const graceMs = this.hadIdleTimeoutRemoval && this.relay.hostSocketTimeout ? this.relay.hostSocketTimeout : 300;
       setTimeout(() => {
         // We leave a short window for the host server to initiate a new host socket.
         // Idle join timeouts use hostSocketTimeout so the expose client can reconnect.

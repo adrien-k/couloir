@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "url";
 
 import expose from "../src/expose/index.js";
+import ExposeSocket from "../src/expose/expose-socket.js";
 import relay from "../src/relay/index.js";
 import { loggerFactory } from "../src/logger.js";
 import ControlApiMock from "./control-api-mock.js";
@@ -476,6 +477,33 @@ it("should not close the couloir on host socket timeout", async () => {
 
     assert.equal((await sendRelayRequest()).subarray(0, 12).toString(), "HTTP/1.1 200");
   });
+});
+
+it("should not close the couloir on idle timeout when reconnect is slower than 300ms", async () => {
+  relayConfig.hostSocketTimeout = 500;
+  exposeConfig.maxConcurrency = 2;
+
+  const originalCreate = ExposeSocket.create;
+  let createCount = 0;
+  ExposeSocket.create = async (...args) => {
+    createCount++;
+    if (createCount > 2) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    return originalCreate(...args);
+  };
+
+  try {
+    await setup({ keepAlive: true }, async () => {
+      assert.equal((await sendRelayRequest()).toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+
+      await new Promise((resolve) => setTimeout(resolve, 1001));
+
+      assert.equal((await sendRelayRequest()).subarray(0, 12).toString(), "HTTP/1.1 200");
+    });
+  } finally {
+    ExposeSocket.create = originalCreate;
+  }
 });
 
 it("should not close the couloir when closing the last client socket", async () => {

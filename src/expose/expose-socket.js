@@ -133,6 +133,7 @@ export default class ExposeSocket extends CouloirClientSocket {
           if (!this.closedBy) {
             this.closedBy = "client";
             this.log.debug("Relay socket closed. Closing local server socket.");
+            await beforeStream();
             await beforeClose();
           }
           this.localSocket.end();
