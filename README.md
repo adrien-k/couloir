@@ -15,7 +15,7 @@ Temporarily expose a http local service to the Internet using your own server.
 - **No configuration**: works out-of-the-box. Can be adjusted through a few CLI options.
 - **Compatible with Websockets.**
 
-Client and relay must run the **same Couloir version** (the open/join handshake is HTTP as of 0.8).
+Client and relay must run the **same Couloir version** (the open/join handshake is HTTP).
 
 [Host it yourself](#self-host-your-relay) by running your own relay server or [use our public relay](#using-couloircloud).
 
