@@ -11,7 +11,7 @@
 Temporarily expose a http local service to the Internet using your own server.
 
 - **Encrypted**: traffic in and out of the relay is encrypted with auto-generated TLS certificates (or by the reverse proxy in front of it).
-- **Self-contained**: does not require anything else to work (SSH, Nginx, Caddy, ...). Can also run behind an HTTP reverse proxy such as [Kamal](https://kamal-deploy.org/).
+- **Self-contained**: does not require anything else to work (SSH, Nginx, Caddy, ...). Can also run behind an HTTP reverse proxy.
 - **No configuration**: works out-of-the-box. Can be adjusted through a few CLI options.
 - **Compatible with Websockets.**
 
@@ -102,7 +102,7 @@ couloir 3000 --on mydomain.com --as bonjour
 You may want to require a password to use your relay as a Couloir proxy.
 
 _Warning: using that option in combination with HTTP-only mode is not recommended as it results in the password
-being transmitted in clear, unless TLS is terminated in front of the relay (see [Behind an HTTP reverse proxy](#behind-an-http-reverse-proxy-kamal))._
+being transmitted in clear, unless TLS is terminated in front of the relay (see [Behind an HTTP reverse proxy](#behind-an-http-reverse-proxy))._
 
 ```sh
 # On the relay
@@ -142,17 +142,17 @@ couloir 3000 --on mydomain.com --http
 
 Use this mode as well when the relay sits behind a TLS-terminating reverse proxy (the proxy speaks HTTPS to the world; the relay process speaks HTTP).
 
-### Behind an HTTP reverse proxy (Kamal)
+### Behind an HTTP reverse proxy
 
-The expose client opens and joins a couloir with ordinary HTTP (`POST /_couloir/open` and a WebSocket upgrade on `GET /_couloir/join`), so the relay can sit behind kamal-proxy, nginx, or Caddy.
+The expose client opens and joins a couloir with ordinary HTTP (`POST /_couloir/open` and a WebSocket upgrade on `GET /_couloir/join`), so the relay can sit behind nginx, Caddy, or another HTTP reverse proxy.
 
-Typical Kamal layout:
+Typical layout:
 
-- Relay process: `couloir relay mydomain.com --http` on the container port (do **not** enable Couloir’s own ACME / port 80; the proxy owns 80/443).
+- Relay: `couloir relay mydomain.com --http` on the port the proxy forwards to (do **not** enable Couloir’s own ACME / port 80 when the proxy owns 80/443).
 - Client: `couloir 3000 --on mydomain.com` (default HTTPS to 443 — **do not** pass `--http`).
 - Proxy hosts must include the apex (`mydomain.com`) and a wildcard (`*.mydomain.com`), or a catch-all.
 - Proxy must forward WebSocket upgrades and preserve the `Host` header.
-- Health check: `GET /up` on the apex (Kamal’s default).
+- Health check: `GET /up` on the apex.
 - Idle timeouts around 60s on the proxy match the relay’s host-socket timeout; idle join sockets are recreated automatically.
 
 Control routes (`/_couloir/open`, `/_couloir/join`) are only intercepted on the **apex** host. The same paths on a couloir subdomain are tunneled to your local app.
