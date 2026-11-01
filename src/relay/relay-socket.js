@@ -177,7 +177,15 @@ export default class RelaySocket extends CouloirClientSocket {
             }
             finished = true;
 
+            let endedPublic = false;
             const endPublic = () => {
+              if (endedPublic) {
+                return;
+              }
+              endedPublic = true;
+              res.body.off("end", endPublic);
+              this.socket.off("close", endPublic);
+              this.socket.off("error", endPublic);
               res.end();
               controlSocket.destroy();
               this._controlSocket = null;
@@ -187,11 +195,13 @@ export default class RelaySocket extends CouloirClientSocket {
               resolve();
             };
 
-            if (res.body.readableEnded) {
+            if (res.body.readableEnded || this.socket.destroyed) {
               endPublic();
               return;
             }
             res.body.once("end", endPublic);
+            this.socket.once("close", endPublic);
+            this.socket.once("error", endPublic);
             res.body.end();
           };
           controlSocket.once("end", finishControlResponse);

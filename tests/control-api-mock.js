@@ -46,6 +46,7 @@ export default class ControlApiMock {
       }
 
       if (req.method === "GET" && req.url === "/api/v1/large-close-delimited") {
+        this.lastRawControlSocket = req.socket;
         req.socket.write(`HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n${"x".repeat(256 * 1024)}`);
         req.socket.end();
         return;
@@ -125,5 +126,6 @@ export default class ControlApiMock {
     this.receivedCouloirSync = [];
     this.receivedCouloirOpen = [];
     this.receivedCouloirClose = [];
+    this.lastRawControlSocket = null;
   }
 }

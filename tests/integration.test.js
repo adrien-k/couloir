@@ -744,6 +744,23 @@ describe("with a control API", () => {
     });
   });
 
+  it("does not hang when the client aborts a close-delimited control response", async () => {
+    await setup({}, async () => {
+      const socket = await createRelayConnection();
+      socket.pause();
+      socket.write("GET /api/v1/large-close-delimited HTTP/1.1\r\nHost: test.local\r\n\r\n");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      socket.destroy();
+
+      await waitUntil(() => assert.equal(controlServer.lastRawControlSocket?.destroyed, true));
+
+      const response = await sendRelayRequest({
+        httpRequest: "GET /api/v1/ping HTTP/1.1\r\nHost: test.local\r\n\r\n",
+      });
+      assert.match(response.toString(), /pong/);
+    });
+  });
+
   it("rejects missing cli key", async () => {
     exposeConfig.cliToken = undefined;
 
