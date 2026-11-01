@@ -11,6 +11,9 @@ export const COULOIR_WS_PROTOCOL = "couloir";
 export const COULOIR_KEY_HEADER = "X-Couloir-Key";
 export const COULOIR_VERSION_HEADER = "X-Couloir-Version";
 
+/** POST /_couloir/open JSON bodies are small; cap memory use and slowloris reads. */
+export const MAX_COULOIR_OPEN_BODY_BYTES = 16 * 1024;
+
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 export function couloirPathname(path = "") {
@@ -55,6 +58,12 @@ export function websocketUpgradeResponse(secWebSocketKey) {
 
 export async function readHttpJsonBody(req) {
   const length = parseInt(getHeader(req.headers, "Content-Length")?.[0] || "0", 10);
+  if (!Number.isFinite(length) || length < 0) {
+    throw new Error("Invalid Content-Length");
+  }
+  if (length > MAX_COULOIR_OPEN_BODY_BYTES) {
+    throw new Error("Body too large");
+  }
   if (!length) {
     return {};
   }
@@ -62,21 +71,46 @@ export async function readHttpJsonBody(req) {
   const buf = await new Promise((resolve, reject) => {
     const chunks = [];
     let received = 0;
-    const finish = () => {
+
+    const cleanup = () => {
       req.body.off("data", onData);
       req.body.off("error", onError);
+      req.socket?.off("close", onAbort);
+      req.socket?.off("error", onAbort);
+    };
+
+    const onAbort = () => {
+      cleanup();
+      reject(new Error("EARLY_SOCKET_CLOSED"));
+    };
+
+    const finish = () => {
+      cleanup();
       resolve(Buffer.concat(chunks));
     };
+
     const onData = (chunk) => {
-      chunks.push(chunk);
       received += chunk.length;
+      if (received > length) {
+        cleanup();
+        reject(new Error("Body too large"));
+        return;
+      }
+      chunks.push(chunk);
       if (received >= length) {
         finish();
       }
     };
-    const onError = (err) => reject(err);
+
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
+
     req.body.on("data", onData);
     req.body.on("error", onError);
+    req.socket?.once("close", onAbort);
+    req.socket?.once("error", onAbort);
   });
 
   return JSON.parse(buf.subarray(0, length).toString());
