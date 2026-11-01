@@ -121,7 +121,9 @@ class HttpMessage {
     }
 
     // We received a chunk that did not qualify as http head. Probably a protocol error.
-    if (!this.headBuffer.indexOf("HTTP/") === -1) {
+    const headPrefix = this.headBuffer.toString("ascii", 0, Math.min(this.headBuffer.length, 12));
+    const looksLikeRequest = /^[A-Z][A-Z0-9-]* /.test(headPrefix);
+    if (this.headBuffer.length >= 8 && !looksLikeRequest && this.headBuffer.indexOf("HTTP/") === -1) {
       this.error = new UserError("Invalid protocol, probably https over http-only relay.");
       this.error.code = "INVALID_PROTOCOL";
 
