@@ -3,7 +3,7 @@ import tls from "node:tls";
 
 import UserError from "../user-error.js";
 import RelaySocket from "./relay-socket.js";
-import RelayCouloir from "./relay-couloir.js";
+import RelayCouloir, { TYPE_HOST } from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
 
 export class RelayServer {
@@ -166,6 +166,9 @@ export class RelayServer {
 
     socket.on("timeout", () => {
       relaySocket.log.debug("Timeout on relay socket");
+      if (relaySocket.type === TYPE_HOST && !relaySocket.bound) {
+        relaySocket.removedForIdleTimeout = true;
+      }
       socket.end();
       this.onRemoveSocket(relaySocket);
     });
