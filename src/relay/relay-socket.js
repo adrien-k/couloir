@@ -380,7 +380,6 @@ export default class RelaySocket extends CouloirClientSocket {
         prevRes?.end();
         this._controlSocket?.end();
         this._controlSocket = null;
-        this.req = req;
 
         const result = await this.#dispatch(req);
         prevReq = req;
