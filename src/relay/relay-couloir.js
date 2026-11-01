@@ -118,10 +118,7 @@ export default class RelayCouloir {
       }
 
       const currentLastHostId = this.lastHostId;
-      const graceMs =
-        socket.removedForIdleTimeout && this.relay.hostSocketTimeout
-          ? this.relay.hostSocketTimeout
-          : 300;
+      const graceMs = socket.removedForIdleTimeout && this.relay.hostSocketTimeout ? this.relay.hostSocketTimeout : 300;
       setTimeout(() => {
         // We leave a short window for the host server to initiate a new host socket.
         // Idle join timeouts use hostSocketTimeout so the expose client can reconnect.
