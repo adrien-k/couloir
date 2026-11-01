@@ -724,6 +724,26 @@ describe("with a control API", () => {
     });
   });
 
+  it("does not truncate a large close-delimited control response for a slow client", async () => {
+    await setup({}, async () => {
+      const socket = await createRelayConnection();
+      socket.pause();
+      socket.write("GET /api/v1/large-close-delimited HTTP/1.1\r\nHost: test.local\r\n\r\n");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const chunks = [];
+      socket.on("data", (chunk) => chunks.push(chunk));
+      const ended = new Promise((resolve) => socket.on("end", resolve));
+      socket.resume();
+      await ended;
+
+      const response = Buffer.concat(chunks).toString();
+      const body = response.slice(response.indexOf("\r\n\r\n") + 4);
+      assert.match(response, /^HTTP\/1.1 200 OK/);
+      assert.equal(body, "x".repeat(256 * 1024));
+    });
+  });
+
   it("rejects missing cli key", async () => {
     exposeConfig.cliToken = undefined;
 

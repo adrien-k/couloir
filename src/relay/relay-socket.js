@@ -169,21 +169,34 @@ export default class RelaySocket extends CouloirClientSocket {
       res.pipe(this.socket);
 
       if (res.isCloseDelimited()) {
-        let finished = false;
-        const finishControlResponse = () => {
-          if (finished) {
-            return;
-          }
-          finished = true;
-          res.end();
-          controlSocket.destroy();
-          this._controlSocket = null;
-          if (!this.socket.destroyed) {
-            this.socket.end();
-          }
-        };
-        controlSocket.once("end", finishControlResponse);
-        controlSocket.once("close", finishControlResponse);
+        await new Promise((resolve) => {
+          let finished = false;
+          const finishControlResponse = () => {
+            if (finished) {
+              return;
+            }
+            finished = true;
+
+            const endPublic = () => {
+              res.end();
+              controlSocket.destroy();
+              this._controlSocket = null;
+              if (!this.socket.destroyed) {
+                this.socket.end();
+              }
+              resolve();
+            };
+
+            if (res.body.readableEnded) {
+              endPublic();
+              return;
+            }
+            res.body.once("end", endPublic);
+            res.body.end();
+          };
+          controlSocket.once("end", finishControlResponse);
+          controlSocket.once("close", finishControlResponse);
+        });
       } else {
         this._controlSocket = controlSocket;
       }
