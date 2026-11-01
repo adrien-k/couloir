@@ -9,7 +9,7 @@ import {
   readHttpJsonBody,
   websocketUpgradeResponse,
 } from "../protocol.js";
-import { htmlResponse, HttpRequest, getHeader } from "../http.js";
+import { htmlResponse, HttpRequest, HttpResponse, getHeader } from "../http.js";
 import { pipeWithQuota } from "../quota-tranform.js";
 
 import CouloirClientSocket from "../couloir-client-socket.js";
@@ -28,6 +28,8 @@ export default class RelaySocket extends CouloirClientSocket {
     this.type = null;
     // True as soon as the socket is used for relaying
     this.bound = false;
+    this.boundHostSocket = null;
+    this._releasedHostSockets = new Set();
 
     this.log = this.relay.log.tags([this.ip, `#${this.id}`]);
     this.#listen();
@@ -40,23 +42,55 @@ export default class RelaySocket extends CouloirClientSocket {
     this.log.info(`connected`);
   }
 
-  proxy(hostSocket) {
+  bindToHost(hostSocket) {
     this.bound = hostSocket.bound = true;
-
-    const onQuotaExceeded = () => {
+    this.boundHostSocket = hostSocket;
+    hostSocket.socket.on("end", () => {
+      if (this._releasedHostSockets.has(hostSocket)) {
+        this._releasedHostSockets.delete(hostSocket);
+        return;
+      }
+      if (this.boundHostSocket === hostSocket) {
+        this.boundHostSocket = null;
+        this.bound = false;
+      }
       this.socket.end();
-      this.relay.onRemoveSocket(this);
-      hostSocket.socket.end();
-      this.relay.onRemoveSocket(hostSocket);
-    };
-
-    pipeWithQuota(this.couloir, hostSocket.stream, this.socket, onQuotaExceeded);
-    // Use this.req instead of this.socket as it still holds the complete request stream
-    // whereas the socket has already been read to detect which type of client is connecting.
-    pipeWithQuota(this.couloir, this.req, hostSocket.socket, onQuotaExceeded);
-    this.socket.on("end", () => {
-      hostSocket.socket.end();
     });
+    this._onHostBound?.(hostSocket);
+    this._onHostBound = null;
+  }
+
+  acquireHostSocket(couloir) {
+    if (this.boundHostSocket && this.couloir === couloir) {
+      return this.boundHostSocket;
+    }
+
+    this.releaseHostSocket();
+
+    return new Promise((resolve, reject) => {
+      const onClose = () => {
+        this._onHostBound = null;
+        reject("EARLY_SOCKET_CLOSED");
+      };
+      this.socket.once("close", onClose);
+      this._onHostBound = (hostSocket) => {
+        this.socket.off("close", onClose);
+        resolve(hostSocket);
+      };
+      couloir.addClientSocket(this);
+    });
+  }
+
+  releaseHostSocket() {
+    const hostSocket = this.boundHostSocket;
+    if (!hostSocket) {
+      return;
+    }
+
+    this.boundHostSocket = null;
+    this.bound = false;
+    this._releasedHostSockets.add(hostSocket);
+    hostSocket.socket.end();
   }
 
   async end({ force = false } = {}) {
@@ -67,18 +101,47 @@ export default class RelaySocket extends CouloirClientSocket {
     }
   }
 
-  #pipeToControl(req) {
-    const controlSocket = this.relay.controlApi.createSocket(() => {
-      req.pipe(controlSocket);
-      controlSocket.pipe(this.socket);
-    });
-    controlSocket.on("end", () => {
+  #quotaExceeded(hostSocket) {
+    return () => {
       this.socket.end();
-    });
-    controlSocket.on("error", () => {
+      this.relay.onRemoveSocket(this);
+      hostSocket.socket.end();
+      this.relay.onRemoveSocket(hostSocket);
+    };
+  }
+
+  async #forwardToHost(req, hostSocket) {
+    const onQuotaExceeded = this.#quotaExceeded(hostSocket);
+    const resPromise = HttpResponse.nextOnSocket(hostSocket.socket);
+    pipeWithQuota(this.couloir, req, hostSocket.socket, onQuotaExceeded);
+    const res = await resPromise;
+    pipeWithQuota(this.couloir, res, this.socket, onQuotaExceeded);
+    return res;
+  }
+
+  async #pipeToControl(req) {
+    const controlSocket = this.relay.controlApi.createSocket();
+
+    try {
+      if (controlSocket.connecting) {
+        await new Promise((resolve, reject) => {
+          controlSocket.once("connect", resolve);
+          controlSocket.once("error", reject);
+        });
+      }
+
+      const resPromise = HttpResponse.nextOnSocket(controlSocket);
+      req.pipe(controlSocket);
+      const res = await resPromise;
+      res.pipe(this.socket);
+      this._controlSocket = controlSocket;
+      return res;
+    } catch {
       this.socket.write(`HTTP/1.1 502 Bad Gateway\r\n\r\nService is temporarily unavailable. Please try again later.`);
       this.socket.end();
-    });
+      controlSocket.destroy();
+      return null;
+    }
   }
 
   #requestHost(req) {
@@ -145,99 +208,140 @@ export default class RelaySocket extends CouloirClientSocket {
 
     if (req.method !== "GET" || upgrade !== "websocket" || !wsKey) {
       this.#writeJson(400, "Bad Request", { error: "WebSocket upgrade required" });
-      return;
+      return false;
     }
 
     if (wsProtocol && wsProtocol !== COULOIR_WS_PROTOCOL) {
       this.#writeJson(400, "Bad Request", { error: "WebSocket upgrade required" });
-      return;
+      return false;
     }
 
     const couloir = this.relay.getCouloir(key);
 
     if (!couloir) {
       this.#writeJson(400, "Bad Request", { error: "Invalid couloir key. Please restart your couloir client." });
-      return;
+      return false;
     }
 
     if (couloir.quotaError) {
       this.#writeJson(400, "Bad Request", { error: couloir.quotaError });
-      return;
+      return false;
     }
 
     this.socket.write(websocketUpgradeResponse(wsKey));
     couloir.addHostSocket(this);
+    return true;
   }
 
   async #handleControl(req) {
     const pathname = couloirPathname(req.path);
     if (pathname === COULOIR_OPEN_PATH) {
       await this.#handleOpen(req);
-    } else if (pathname === COULOIR_JOIN_PATH) {
-      this.#handleJoin(req);
-    } else {
-      req.end();
+      return { close: true };
     }
+    if (pathname === COULOIR_JOIN_PATH) {
+      const joined = this.#handleJoin(req);
+      return joined ? { hijack: true } : { close: true };
+    }
+    req.end();
+    return { close: true };
+  }
+
+  async #dispatch(req) {
+    const host = this.#requestHost(req);
+
+    if (host === this.relay.domain && isCouloirControlPath(req.path)) {
+      this.releaseHostSocket();
+      return this.#handleControl(req);
+    }
+
+    // Apex /up (and other non-couloir hosts) must not fall through to the logo page
+    // so a reverse proxy health check (Kamal's default GET /up) succeeds.
+    if (this.#isHealthCheckProbe(req) && !this.#isCouloirSubdomainHost(host)) {
+      this.releaseHostSocket();
+      this.log.debug("upstream health check GET /up");
+      if (this.relay.controlApi.enabled()) {
+        const res = await this.#pipeToControl(req);
+        return res ? { res } : { close: true };
+      }
+      this.socket.write(htmlResponse(req.headers, "couloir relay is up"));
+      return {};
+    }
+
+    if (host && host === this.relay.domain) {
+      this.releaseHostSocket();
+      if (this.relay.controlApi.enabled()) {
+        const res = await this.#pipeToControl(req);
+        return res ? { res } : { close: true };
+      }
+      this.socket.write(
+        htmlResponse(
+          req.headers,
+          logo(
+            `\n\n  Open couloirs: ${Object.keys(this.relay.couloirs).length}\n\n  To open a new couloir, run:\n  > ${this.relay.exposeCommand()}`,
+            { center: false },
+          ),
+        ),
+      );
+      return {};
+    }
+
+    if (host && this.relay.couloirs[host]) {
+      const couloir = this.relay.couloirs[host];
+      const hostSocket = await this.acquireHostSocket(couloir);
+      const res = await this.#forwardToHost(req, hostSocket);
+      if (res.isWebSocket()) {
+        return { res, hijack: true };
+      }
+      return { res };
+    }
+
+    this.releaseHostSocket();
+    this.socket.write(
+      htmlResponse(req.headers, logo(`404 - Couloir "${host}" is not open`), {
+        status: "404 Not found",
+      }),
+    );
+    return {};
   }
 
   /**
    * Handles TCP connections from either the relay server (ie: couloir connection) or from a
    * regular client using the proxy.
    *
-   * Control-plane open/join are HTTP on the apex host; everything else is public traffic
-   * matched by Host.
+   * Each HTTP request is routed by Host so a keep-alive connection can switch between a
+   * couloir, the apex, and the control API (as reverse proxies often reuse sockets).
    */
   async #listen() {
+    this.socket.on("end", () => {
+      this.releaseHostSocket();
+    });
+
+    let prevReq;
+    let prevRes;
+
     try {
-      const req = await HttpRequest.nextOnSocket(this.socket);
-      this.req = req;
+      while (!this.socket.destroyed) {
+        prevReq?.end();
+        const req = await HttpRequest.nextOnSocket(this.socket);
+        prevRes?.end();
+        this._controlSocket?.end();
+        this._controlSocket = null;
+        this.req = req;
 
-      const host = this.#requestHost(req);
+        const result = await this.#dispatch(req);
+        prevReq = req;
+        prevRes = result?.res;
 
-      if (host === this.relay.domain && isCouloirControlPath(req.path)) {
-        await this.#handleControl(req);
-        return;
-      }
-
-      // Apex /up (and other non-couloir hosts) must not fall through to the logo page
-      // so a reverse proxy health check (Kamal's default GET /up) succeeds.
-      if (this.#isHealthCheckProbe(req) && !this.#isCouloirSubdomainHost(host)) {
-        this.log.debug("upstream health check GET /up");
-        if (this.relay.controlApi.enabled()) {
-          this.#pipeToControl(req);
-        } else {
-          this.socket.write(htmlResponse(req.headers, "couloir relay is up"));
-          this.socket.end();
+        if (result?.hijack) {
+          return;
         }
-        return;
-      }
-
-      if (host && host === this.relay.domain) {
-        if (this.relay.controlApi.enabled()) {
-          this.#pipeToControl(req);
-        } else {
-          this.socket.write(
-            htmlResponse(
-              req.headers,
-              logo(
-                `\n\n  Open couloirs: ${Object.keys(this.relay.couloirs).length}\n\n  To open a new couloir, run:\n  > ${this.relay.exposeCommand()}`,
-                { center: false },
-              ),
-            ),
-          );
-          this.socket.end();
+        if (result?.close) {
+          if (!this.socket.destroyed) {
+            this.socket.end();
+          }
+          return;
         }
-        return;
-      }
-      if (host && this.relay.couloirs[host]) {
-        this.relay.couloirs[host].addClientSocket(this);
-      } else {
-        this.socket.write(
-          htmlResponse(req.headers, logo(`404 - Couloir "${host}" is not open`), {
-            status: "404 Not found",
-          }),
-        );
-        this.socket.end();
       }
     } catch (e) {
       if (e.code === "INVALID_PROTOCOL") {

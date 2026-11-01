@@ -146,7 +146,7 @@ export default class RelayCouloir {
       const clientSocket = this.pendingClients.shift();
       const hostSocket = this.availableHosts.shift();
 
-      clientSocket.proxy(hostSocket);
+      clientSocket.bindToHost(hostSocket);
       this.bindNextSocket();
     }
   }

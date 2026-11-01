@@ -336,6 +336,25 @@ it("can handle multiple requests in the same socket", async () => {
   });
 });
 
+it("routes a later keep-alive request by Host instead of the first Host", async () => {
+  await setup({ keepAlive: true }, async () => {
+    const socket = await createRelayConnection();
+    const response1 = await sendRelayRequest({
+      socket,
+      httpRequest: "GET /from-couloir HTTP/1.1\r\nHost: couloir.test.local\r\n\r\n",
+    });
+    assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+
+    const response2 = await sendRelayRequest({
+      socket,
+      httpRequest: "GET /from-apex HTTP/1.1\r\nHost: test.local\r\n\r\n",
+    });
+    assert.match(response2.toString(), /Open couloirs/);
+    assert.equal(localServerReceived.length, 1);
+    assert.match(localServerReceived[0].toString(), /^GET \/from-couloir HTTP\/1.1/);
+  });
+});
+
 describe("can protect the relay with a password", () => {
   beforeEach(() => {
     relayConfig.password = "foo";
@@ -607,6 +626,25 @@ describe("with a control API", () => {
         label: "specific",
       },
     ]);
+  });
+
+  it("proxies a later apex request to control after a couloir request on the same socket", async () => {
+    await setup({ keepAlive: true }, async () => {
+      const socket = await createRelayConnection();
+      const response1 = await sendRelayRequest({
+        socket,
+        httpRequest: "GET /from-couloir HTTP/1.1\r\nHost: default-couloir.test.local\r\n\r\n",
+      });
+      assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+
+      const response2 = await sendRelayRequest({
+        socket,
+        httpRequest: "GET /from-control HTTP/1.1\r\nHost: test.local\r\n\r\n",
+      });
+      assert.match(response2.toString(), /^HTTP\/1.1 404/);
+      assert.match(response2.toString(), /Not found/);
+      assert.equal(localServerReceived.length, 1);
+    });
   });
 
   it("rejects missing cli key", async () => {
