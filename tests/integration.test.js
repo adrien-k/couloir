@@ -355,6 +355,40 @@ it("routes a later keep-alive request by Host instead of the first Host", async 
   });
 });
 
+it("parks the join and reuses it after flipping back to the couloir Host", async () => {
+  await setup({ keepAlive: true }, async ({ exposeServer }) => {
+    const openingLogs = () => logs.filter((line) => String(line).includes("Opening relay socket"));
+    const socket = await createRelayConnection();
+
+    const response1 = await sendRelayRequest({
+      socket,
+      httpRequest: "GET /from-couloir HTTP/1.1\r\nHost: couloir.test.local\r\n\r\n",
+    });
+    assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+    const joinsAfterFirst = Object.keys(exposeServer.activeSockets).length;
+    const openingsAfterFirst = openingLogs().length;
+    assert.equal(joinsAfterFirst, 1);
+
+    const response2 = await sendRelayRequest({
+      socket,
+      httpRequest: "GET /from-apex HTTP/1.1\r\nHost: test.local\r\n\r\n",
+    });
+    assert.match(response2.toString(), /Open couloirs/);
+    assert.equal(Object.keys(exposeServer.activeSockets).length, joinsAfterFirst);
+    assert.equal(openingLogs().length, openingsAfterFirst);
+
+    const response3 = await sendRelayRequest({
+      socket,
+      httpRequest: "GET /from-couloir-again HTTP/1.1\r\nHost: couloir.test.local\r\n\r\n",
+    });
+    assert.equal(response3.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2");
+    assert.equal(localServerReceived.length, 2);
+    assert.match(localServerReceived[1].toString(), /^GET \/from-couloir-again HTTP\/1.1/);
+    assert.equal(Object.keys(exposeServer.activeSockets).length, joinsAfterFirst);
+    assert.equal(openingLogs().length, openingsAfterFirst);
+  });
+});
+
 describe("can protect the relay with a password", () => {
   beforeEach(() => {
     relayConfig.password = "foo";

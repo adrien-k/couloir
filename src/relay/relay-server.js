@@ -69,17 +69,20 @@ export class RelayServer {
   }
 
   removeCouloir(couloir) {
-    this.log.info(`Closing couloir "${couloir.host}"`);
-    couloir.controlApiCouloirClient?.close();
-
-    couloir.beforeClose();
-
+    if (couloir.closed || this.couloirs[couloir.host] !== couloir) {
+      return;
+    }
+    couloir.closed = true;
     delete this.couloirs[couloir.host];
     for (const key of Object.keys(this.keyToHost)) {
       if (this.keyToHost[key] === couloir.host) {
         delete this.keyToHost[key];
       }
     }
+
+    this.log.info(`Closing couloir "${couloir.host}"`);
+    couloir.controlApiCouloirClient?.close();
+    couloir.beforeClose();
   }
 
   async openCouloir(socket, { couloirLabel, password, version: clientVersion, cliToken }) {

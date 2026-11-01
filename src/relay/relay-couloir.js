@@ -121,7 +121,7 @@ export default class RelayCouloir {
       setTimeout(() => {
         // We leave 300ms for the host server to initiate a new host socket.
         // If no additional host joins in between we remove the couloir.
-        if (this.lastHostId === currentLastHostId) {
+        if (!this.closed && this.lastHostId === currentLastHostId) {
           this.relay.removeCouloir(this);
         }
       }, 300);
@@ -138,6 +138,24 @@ export default class RelayCouloir {
 
   removeClientSocket(socket) {
     this.pendingClients = this.pendingClients.filter((s) => s.id !== socket.id);
+  }
+
+  /**
+   * Return a join socket to the idle pool after a public connection leaves this
+   * couloir (Host flip or client close). The expose-side HTTP loop stays waiting
+   * for the next request; no new JOIN is required.
+   */
+  returnHostSocket(socket) {
+    if (this.closed || this.quotaError || !this.hostsSockets[socket.id]) {
+      return;
+    }
+    if (this.availableHosts.some((s) => s.id === socket.id)) {
+      return;
+    }
+
+    socket.bound = false;
+    this.availableHosts.push(socket);
+    this.bindNextSocket();
   }
 
   bindNextSocket() {

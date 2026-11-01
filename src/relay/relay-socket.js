@@ -29,7 +29,7 @@ export default class RelaySocket extends CouloirClientSocket {
     // True as soon as the socket is used for relaying
     this.bound = false;
     this.boundHostSocket = null;
-    this._releasedHostSockets = new Set();
+    this.hijacked = false;
 
     this.log = this.relay.log.tags([this.ip, `#${this.id}`]);
     this.#listen();
@@ -43,19 +43,20 @@ export default class RelaySocket extends CouloirClientSocket {
   }
 
   bindToHost(hostSocket) {
+    this.#unbindHostEndListener();
     this.bound = hostSocket.bound = true;
     this.boundHostSocket = hostSocket;
-    hostSocket.socket.on("end", () => {
-      if (this._releasedHostSockets.has(hostSocket)) {
-        this._releasedHostSockets.delete(hostSocket);
+    this._onHostEnded = () => {
+      if (this.boundHostSocket !== hostSocket) {
         return;
       }
-      if (this.boundHostSocket === hostSocket) {
-        this.boundHostSocket = null;
-        this.bound = false;
-      }
+      this.boundHostSocket = null;
+      this.bound = false;
+      this.#unbindHostEndListener();
       this.socket.end();
-    });
+    };
+    this._onHostEndedSocket = hostSocket;
+    hostSocket.socket.on("end", this._onHostEnded);
     this._onHostBound?.(hostSocket);
     this._onHostBound = null;
   }
@@ -65,7 +66,7 @@ export default class RelaySocket extends CouloirClientSocket {
       return this.boundHostSocket;
     }
 
-    this.releaseHostSocket();
+    this.releaseHostSocket({ park: true });
 
     return new Promise((resolve, reject) => {
       const onClose = () => {
@@ -81,16 +82,44 @@ export default class RelaySocket extends CouloirClientSocket {
     });
   }
 
-  releaseHostSocket() {
+  /**
+   * Detach the current join from this public connection.
+   * `park: true` (default) returns it to the couloir pool so Host flapping
+   * does not force a new JOIN. Pass `park: false` to close the join (quota,
+   * websocket splice teardown, destroyed socket).
+   */
+  releaseHostSocket({ park = true } = {}) {
     const hostSocket = this.boundHostSocket;
     if (!hostSocket) {
       return;
     }
 
+    this.#unbindHostEndListener();
     this.boundHostSocket = null;
     this.bound = false;
-    this._releasedHostSockets.add(hostSocket);
+    hostSocket.bound = false;
+
+    if (
+      park &&
+      hostSocket.couloir &&
+      !hostSocket.couloir.closed &&
+      !hostSocket.couloir.quotaError &&
+      !hostSocket.socket.destroyed &&
+      !this.hijacked
+    ) {
+      hostSocket.couloir.returnHostSocket(hostSocket);
+      return;
+    }
+
     hostSocket.socket.end();
+  }
+
+  #unbindHostEndListener() {
+    if (this._onHostEnded && this._onHostEndedSocket) {
+      this._onHostEndedSocket.socket.off("end", this._onHostEnded);
+    }
+    this._onHostEnded = null;
+    this._onHostEndedSocket = null;
   }
 
   async end({ force = false } = {}) {
@@ -103,10 +132,14 @@ export default class RelaySocket extends CouloirClientSocket {
 
   #quotaExceeded(hostSocket) {
     return () => {
+      if (this.boundHostSocket === hostSocket) {
+        this.releaseHostSocket({ park: false });
+      } else if (hostSocket && !hostSocket.socket.destroyed) {
+        // Public connection may already have parked this join.
+        hostSocket.socket.end();
+      }
       this.socket.end();
       this.relay.onRemoveSocket(this);
-      hostSocket.socket.end();
-      this.relay.onRemoveSocket(hostSocket);
     };
   }
 
@@ -291,6 +324,7 @@ export default class RelaySocket extends CouloirClientSocket {
       const hostSocket = await this.acquireHostSocket(couloir);
       const res = await this.#forwardToHost(req, hostSocket);
       if (res.isWebSocket()) {
+        this.hijacked = true;
         return { res, hijack: true };
       }
       return { res };

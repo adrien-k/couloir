@@ -96,12 +96,15 @@ export default class ControlApi {
   }
 
   async open({ cliToken, couloirLabel = null }) {
-    return this.handleCouloirResponse(() =>
+    const json = await this.handleCouloirResponse(() =>
       this.post("/api/v1/couloir/open", {
         cli_token: cliToken,
         label: couloirLabel,
       }),
     );
+    const closeKey = `${cliToken}:${json.couloir || couloirLabel}`;
+    this.closedCouloirs?.delete(closeKey);
+    return json;
   }
 
   async sync({ cliToken, couloirLabel, tranferredBytes }) {
@@ -133,9 +136,20 @@ class CouloirControlClient {
   }
 
   async close() {
-    return this.controlApi.post("/api/v1/couloir/close", {
-      cli_token: this.cliApiKey,
-      label: this.couloirLabel,
-    });
+    const closeKey = `${this.cliApiKey}:${this.couloirLabel}`;
+    this.controlApi.closedCouloirs ??= new Set();
+    if (this.controlApi.closedCouloirs.has(closeKey)) {
+      return;
+    }
+    this.controlApi.closedCouloirs.add(closeKey);
+
+    try {
+      return await this.controlApi.post("/api/v1/couloir/close", {
+        cli_token: this.cliApiKey,
+        label: this.couloirLabel,
+      });
+    } catch {
+      // The control server may already be gone during shutdown.
+    }
   }
 }
