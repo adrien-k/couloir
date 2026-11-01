@@ -167,7 +167,26 @@ export default class RelaySocket extends CouloirClientSocket {
       req.pipe(controlSocket);
       const res = await resPromise;
       res.pipe(this.socket);
-      this._controlSocket = controlSocket;
+
+      if (res.isCloseDelimited()) {
+        let finished = false;
+        const finishControlResponse = () => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          res.end();
+          controlSocket.destroy();
+          this._controlSocket = null;
+          if (!this.socket.destroyed) {
+            this.socket.end();
+          }
+        };
+        controlSocket.once("end", finishControlResponse);
+        controlSocket.once("close", finishControlResponse);
+      } else {
+        this._controlSocket = controlSocket;
+      }
       return res;
     } catch {
       this.socket.write(`HTTP/1.1 502 Bad Gateway\r\n\r\nService is temporarily unavailable. Please try again later.`);

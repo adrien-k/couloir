@@ -39,6 +39,12 @@ export default class ControlApiMock {
         return;
       }
 
+      if (req.method === "GET" && req.url === "/api/v1/close-delimited") {
+        req.socket.write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from control");
+        req.socket.end();
+        return;
+      }
+
       if (req.method === "POST" && req.url === "/api/v1/couloir/open") {
         const body = await readJsonBody(req);
         this.receivedCouloirOpen.push(body);

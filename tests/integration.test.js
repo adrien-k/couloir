@@ -681,6 +681,21 @@ describe("with a control API", () => {
     });
   });
 
+  it("completes close-delimited control API responses without waiting for idle timeout", async () => {
+    relayConfig.hostSocketTimeout = 5000;
+    await setup({}, async () => {
+      const socket = await createRelayConnection();
+      const started = Date.now();
+      const response = await sendRelayRequest({
+        socket,
+        httpRequest: "GET /api/v1/close-delimited HTTP/1.1\r\nHost: test.local\r\n\r\n",
+      });
+      assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from control");
+      assert.ok(socket.destroyed);
+      assert.ok(Date.now() - started < 2000);
+    });
+  });
+
   it("rejects missing cli key", async () => {
     exposeConfig.cliToken = undefined;
 

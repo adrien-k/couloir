@@ -170,6 +170,14 @@ class HttpMessage {
     return this.headers && getHeader(this.headers, "Upgrade")?.[0]?.toLowerCase() === "websocket";
   }
 
+  isCloseDelimited() {
+    if (getHeader(this.headers, "Content-Length") !== undefined) {
+      return false;
+    }
+    const transferEncoding = getHeader(this.headers, "Transfer-Encoding")?.[0]?.toLowerCase();
+    return !transferEncoding?.includes("chunked");
+  }
+
   /**
    * Call this when the http message is completed and the body is fully streamed.
    */
@@ -179,6 +187,7 @@ class HttpMessage {
 
   static async nextOnSocket(socket) {
     const message = new this();
+    message.socket = socket;
     await message.waitForHead(socket);
     return message;
   }
