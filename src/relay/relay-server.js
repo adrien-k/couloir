@@ -3,9 +3,8 @@ import tls from "node:tls";
 
 import UserError from "../user-error.js";
 import RelaySocket from "./relay-socket.js";
-import RelayCouloir from "./relay-couloir.js";
+import RelayCouloir, { TYPE_HOST } from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
-import { COULOIR_TIMEOUT } from "../protocol.js";
 
 export class RelayServer {
   constructor({ http, relayPort, log, verbose, domain, certService, password, controlApi, hostSocketTimeout } = {}) {
@@ -70,23 +69,28 @@ export class RelayServer {
   }
 
   removeCouloir(couloir) {
-    this.log.info(`Closing couloir "${couloir.host}"`);
-    couloir.controlApiCouloirClient?.close();
-
-    couloir.beforeClose();
-
+    if (couloir.closed || this.couloirs[couloir.host] !== couloir) {
+      return;
+    }
+    couloir.closed = true;
     delete this.couloirs[couloir.host];
     for (const key of Object.keys(this.keyToHost)) {
       if (this.keyToHost[key] === couloir.host) {
         delete this.keyToHost[key];
       }
     }
+
+    this.log.info(`Closing couloir "${couloir.host}"`);
+    couloir.controlApiCouloirClient?.close();
+    couloir.beforeClose();
   }
 
   async openCouloir(socket, { couloirLabel, password, version: clientVersion, cliToken }) {
-    // v0.6.x has a few protocol changes so we enforce patch-level equality
-    if (clientVersion && !equalVersions(clientVersion, version, "patch")) {
-      throw new UserError(`Client version (${clientVersion}) is not compatible with server version (${version}).`);
+    // HTTP control protocol is a breaking change; require matching patch versions.
+    if (!clientVersion || !equalVersions(clientVersion, version, "patch")) {
+      throw new UserError(
+        `Client version (${clientVersion || "unknown"}) is not compatible with server version (${version}).`,
+      );
     }
     if (!this.controlApi.enabled() && !couloirLabel) {
       couloirLabel = this.hostPrefix;
@@ -160,15 +164,10 @@ export class RelayServer {
       this.onRemoveSocket(relaySocket);
     });
 
-    socket.on("timeout", async () => {
+    socket.on("timeout", () => {
       relaySocket.log.debug("Timeout on relay socket");
-      if (!relaySocket.bound) {
-        try {
-          await relaySocket.couloirProtocol.sendMessage(COULOIR_TIMEOUT);
-        } catch (err) {
-          relaySocket.log.error("Error sending COULOIR_TIMEOUT message");
-          relaySocket.log.error(err);
-        }
+      if (relaySocket.type === TYPE_HOST) {
+        relaySocket.removedForIdleTimeout = true;
       }
       socket.end();
       this.onRemoveSocket(relaySocket);

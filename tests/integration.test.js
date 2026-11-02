@@ -1,14 +1,18 @@
 import { it, beforeEach, before, after, describe } from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import net from "node:net";
 import tls from "node:tls";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "url";
 
 import expose from "../src/expose/index.js";
+import ExposeSocket from "../src/expose/expose-socket.js";
 import relay from "../src/relay/index.js";
 import { loggerFactory } from "../src/logger.js";
 import ControlApiMock from "./control-api-mock.js";
+import version from "../src/version.js";
+import { COULOIR_WS_PROTOCOL, websocketAcceptKey } from "../src/protocol.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -56,6 +60,15 @@ function assertHttpEqual(req, head, body) {
   const endOfHead = req.indexOf("\r\n\r\n");
   assert.equal(req.toString("utf8", 0, endOfHead + 2), head);
   assert.equal(req.toString("hex", endOfHead + 4), body.toString("hex"));
+}
+
+function parseHttpJson(data) {
+  const text = data.toString();
+  const endOfHead = text.indexOf("\r\n\r\n");
+  const startLine = text.slice(0, text.indexOf("\r\n"));
+  const status = Number(startLine.split(" ")[1]);
+  const body = text.slice(endOfHead + 4);
+  return { status, startLine, body: body ? JSON.parse(body) : null };
 }
 
 let relayConfig, exposeConfig, logs, localServerReceived, responseCounter;
@@ -324,6 +337,59 @@ it("can handle multiple requests in the same socket", async () => {
   });
 });
 
+it("routes a later keep-alive request by Host instead of the first Host", async () => {
+  await setup({ keepAlive: true }, async () => {
+    const socket = await createRelayConnection();
+    const response1 = await sendRelayRequest({
+      socket,
+      httpRequest: "GET /from-couloir HTTP/1.1\r\nHost: couloir.test.local\r\n\r\n",
+    });
+    assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+
+    const response2 = await sendRelayRequest({
+      socket,
+      httpRequest: "GET /from-apex HTTP/1.1\r\nHost: test.local\r\n\r\n",
+    });
+    assert.match(response2.toString(), /Open couloirs/);
+    assert.equal(localServerReceived.length, 1);
+    assert.match(localServerReceived[0].toString(), /^GET \/from-couloir HTTP\/1.1/);
+  });
+});
+
+it("parks the join and reuses it after flipping back to the couloir Host", async () => {
+  await setup({ keepAlive: true }, async ({ exposeServer }) => {
+    const openingLogs = () => logs.filter((line) => String(line).includes("Opening relay socket"));
+    const socket = await createRelayConnection();
+
+    const response1 = await sendRelayRequest({
+      socket,
+      httpRequest: "GET /from-couloir HTTP/1.1\r\nHost: couloir.test.local\r\n\r\n",
+    });
+    assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+    const joinsAfterFirst = Object.keys(exposeServer.activeSockets).length;
+    const openingsAfterFirst = openingLogs().length;
+    assert.equal(joinsAfterFirst, 1);
+
+    const response2 = await sendRelayRequest({
+      socket,
+      httpRequest: "GET /from-apex HTTP/1.1\r\nHost: test.local\r\n\r\n",
+    });
+    assert.match(response2.toString(), /Open couloirs/);
+    assert.equal(Object.keys(exposeServer.activeSockets).length, joinsAfterFirst);
+    assert.equal(openingLogs().length, openingsAfterFirst);
+
+    const response3 = await sendRelayRequest({
+      socket,
+      httpRequest: "GET /from-couloir-again HTTP/1.1\r\nHost: couloir.test.local\r\n\r\n",
+    });
+    assert.equal(response3.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar2");
+    assert.equal(localServerReceived.length, 2);
+    assert.match(localServerReceived[1].toString(), /^GET \/from-couloir-again HTTP\/1.1/);
+    assert.equal(Object.keys(exposeServer.activeSockets).length, joinsAfterFirst);
+    assert.equal(openingLogs().length, openingsAfterFirst);
+  });
+});
+
 describe("can protect the relay with a password", () => {
   beforeEach(() => {
     relayConfig.password = "foo";
@@ -413,6 +479,33 @@ it("should not close the couloir on host socket timeout", async () => {
   });
 });
 
+it("should not close the couloir on idle timeout when reconnect is slower than 300ms", async () => {
+  relayConfig.hostSocketTimeout = 500;
+  exposeConfig.maxConcurrency = 2;
+
+  const originalCreate = ExposeSocket.create;
+  let createCount = 0;
+  ExposeSocket.create = async (...args) => {
+    createCount++;
+    if (createCount > 2) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    return originalCreate(...args);
+  };
+
+  try {
+    await setup({ keepAlive: true }, async () => {
+      assert.equal((await sendRelayRequest()).toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+
+      await new Promise((resolve) => setTimeout(resolve, 1001));
+
+      assert.equal((await sendRelayRequest()).subarray(0, 12).toString(), "HTTP/1.1 200");
+    });
+  } finally {
+    ExposeSocket.create = originalCreate;
+  }
+});
+
 it("should not close the couloir when closing the last client socket", async () => {
   await setup({ keepAlive: true }, async () => {
     const response = await new Promise((resolve, reject) => {
@@ -469,6 +562,88 @@ it("returns 502 when closing local server", async () => {
   });
 });
 
+describe("HTTP control protocol", () => {
+  async function withRelay(fn) {
+    const relayServer = relay(relayConfig);
+    await relayServer.start();
+    try {
+      await fn(relayServer);
+    } finally {
+      await relayServer.stop({ force: true });
+    }
+  }
+
+  async function openCouloirHttp({ couloirLabel = "couloir", extra = {} } = {}) {
+    const socket = await createRelayConnection();
+    const body = JSON.stringify({ version, couloirLabel, ...extra });
+    socket.write(
+      `POST /_couloir/open HTTP/1.1\r\nHost: test.local\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+    );
+    return parseHttpJson(await socketDataPromise(socket));
+  }
+
+  it("opens a couloir with POST /_couloir/open", async () => {
+    await withRelay(async () => {
+      const { status, body } = await openCouloirHttp();
+      assert.equal(status, 200);
+      assert.equal(body.host, "couloir.test.local");
+      assert.equal(typeof body.key, "string");
+    });
+  });
+
+  it("rejects open without a matching client version", async () => {
+    await withRelay(async () => {
+      const { status, body } = await openCouloirHttp({ extra: { version: "0.0.0" } });
+      assert.equal(status, 400);
+      assert.match(body.error, /not compatible with server version/);
+    });
+  });
+
+  it("joins a couloir with a WebSocket upgrade", async () => {
+    await withRelay(async () => {
+      const { body: opened } = await openCouloirHttp();
+      const wsKey = crypto.randomBytes(16).toString("base64");
+      const socket = await createRelayConnection();
+      socket.write(
+        `GET /_couloir/join HTTP/1.1\r\n` +
+          `Host: test.local\r\n` +
+          `Connection: Upgrade\r\n` +
+          `Upgrade: websocket\r\n` +
+          `Sec-WebSocket-Version: 13\r\n` +
+          `Sec-WebSocket-Key: ${wsKey}\r\n` +
+          `Sec-WebSocket-Protocol: ${COULOIR_WS_PROTOCOL}\r\n` +
+          `X-Couloir-Key: ${opened.key}\r\n\r\n`,
+      );
+      const response = (await socketDataPromise(socket)).toString();
+      assert.match(response, /^HTTP\/1.1 101 Switching Protocols/);
+      assert.match(response, /Upgrade: websocket/i);
+      assert.ok(response.includes(`Sec-WebSocket-Accept: ${websocketAcceptKey(wsKey)}`));
+      assert.match(response, /Sec-WebSocket-Protocol: couloir/);
+    });
+  });
+
+  it("responds to GET /up on the apex host", async () => {
+    await withRelay(async () => {
+      const response = await sendRelayRequest({
+        httpRequest: "GET /up HTTP/1.1\r\nHost: test.local\r\n\r\n",
+      });
+      assert.match(response.toString(), /^HTTP\/1.1 200/);
+      assert.match(response.toString(), /couloir relay is up/);
+    });
+  });
+});
+
+it("tunnels /_couloir paths on a couloir subdomain to the local server", async () => {
+  await setup({}, async () => {
+    const response = await sendRelayRequest({
+      httpRequest: "GET /_couloir/open HTTP/1.1\r\nHost: couloir.test.local\r\n\r\nfoo",
+    });
+    assert.equal(localServerReceived.length, 1);
+    assert.match(localServerReceived[0].toString(), /^GET \/_couloir\/open HTTP\/1.1/);
+    assert.match(response.toString(), /^HTTP\/1.1 200/);
+  });
+});
+
 describe("with a control API", () => {
   const controlServer = new ControlApiMock();
 
@@ -513,6 +688,77 @@ describe("with a control API", () => {
         label: "specific",
       },
     ]);
+  });
+
+  it("proxies a later apex request to control after a couloir request on the same socket", async () => {
+    await setup({ keepAlive: true }, async () => {
+      const socket = await createRelayConnection();
+      const response1 = await sendRelayRequest({
+        socket,
+        httpRequest: "GET /from-couloir HTTP/1.1\r\nHost: default-couloir.test.local\r\n\r\n",
+      });
+      assert.equal(response1.toString(), "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbar1");
+
+      const response2 = await sendRelayRequest({
+        socket,
+        httpRequest: "GET /from-control HTTP/1.1\r\nHost: test.local\r\n\r\n",
+      });
+      assert.match(response2.toString(), /^HTTP\/1.1 404/);
+      assert.match(response2.toString(), /Not found/);
+      assert.equal(localServerReceived.length, 1);
+    });
+  });
+
+  it("completes close-delimited control API responses without waiting for idle timeout", async () => {
+    relayConfig.hostSocketTimeout = 5000;
+    await setup({}, async () => {
+      const socket = await createRelayConnection();
+      const started = Date.now();
+      const response = await sendRelayRequest({
+        socket,
+        httpRequest: "GET /api/v1/close-delimited HTTP/1.1\r\nHost: test.local\r\n\r\n",
+      });
+      assert.equal(response.toString(), "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello from control");
+      assert.ok(socket.destroyed);
+      assert.ok(Date.now() - started < 2000);
+    });
+  });
+
+  it("does not truncate a large close-delimited control response for a slow client", async () => {
+    await setup({}, async () => {
+      const socket = await createRelayConnection();
+      socket.pause();
+      socket.write("GET /api/v1/large-close-delimited HTTP/1.1\r\nHost: test.local\r\n\r\n");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const chunks = [];
+      socket.on("data", (chunk) => chunks.push(chunk));
+      const ended = new Promise((resolve) => socket.on("end", resolve));
+      socket.resume();
+      await ended;
+
+      const response = Buffer.concat(chunks).toString();
+      const body = response.slice(response.indexOf("\r\n\r\n") + 4);
+      assert.match(response, /^HTTP\/1.1 200 OK/);
+      assert.equal(body, "x".repeat(256 * 1024));
+    });
+  });
+
+  it("does not hang when the client aborts a close-delimited control response", async () => {
+    await setup({}, async () => {
+      const socket = await createRelayConnection();
+      socket.pause();
+      socket.write("GET /api/v1/large-close-delimited HTTP/1.1\r\nHost: test.local\r\n\r\n");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      socket.destroy();
+
+      await waitUntil(() => assert.equal(controlServer.lastRawControlSocket?.destroyed, true));
+
+      const response = await sendRelayRequest({
+        httpRequest: "GET /api/v1/ping HTTP/1.1\r\nHost: test.local\r\n\r\n",
+      });
+      assert.match(response.toString(), /pong/);
+    });
   });
 
   it("rejects missing cli key", async () => {

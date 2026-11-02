@@ -27,6 +27,18 @@ function parseHeaders(headerLines) {
   return headers;
 }
 
+export function getHeader(headers, name) {
+  if (!headers) {
+    return;
+  }
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) {
+      return headers[key];
+    }
+  }
+}
+
 export function parseReqHead(head) {
   const { startLine, headers } = parseHttp(head);
   const [method, path, version] = startLine.split(" ");
@@ -109,7 +121,9 @@ class HttpMessage {
     }
 
     // We received a chunk that did not qualify as http head. Probably a protocol error.
-    if (!this.headBuffer.indexOf("HTTP/") === -1) {
+    const headPrefix = this.headBuffer.toString("ascii", 0, Math.min(this.headBuffer.length, 12));
+    const looksLikeRequest = /^[A-Z][A-Z0-9-]* /.test(headPrefix);
+    if (this.headBuffer.length >= 8 && !looksLikeRequest && this.headBuffer.indexOf("HTTP/") === -1) {
       this.error = new UserError("Invalid protocol, probably https over http-only relay.");
       this.error.code = "INVALID_PROTOCOL";
 
@@ -155,7 +169,15 @@ class HttpMessage {
   }
 
   isWebSocket() {
-    return this.headers && this.headers["Upgrade"]?.[0]?.toLowerCase() === "websocket";
+    return this.headers && getHeader(this.headers, "Upgrade")?.[0]?.toLowerCase() === "websocket";
+  }
+
+  isCloseDelimited() {
+    if (getHeader(this.headers, "Content-Length") !== undefined) {
+      return false;
+    }
+    const transferEncoding = getHeader(this.headers, "Transfer-Encoding")?.[0]?.toLowerCase();
+    return !transferEncoding?.includes("chunked");
   }
 
   /**
@@ -167,6 +189,7 @@ class HttpMessage {
 
   static async nextOnSocket(socket) {
     const message = new this();
+    message.socket = socket;
     await message.waitForHead(socket);
     return message;
   }

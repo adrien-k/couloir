@@ -87,6 +87,7 @@ export default class RelayCouloir {
     socket.couloir = this;
     socket.setType(TYPE_HOST, this.host);
     this.lastHostId = socket.id;
+    this.hadIdleTimeoutRemoval = false;
 
     this.hostsSockets[socket.id] = socket;
     this.availableHosts.push(socket);
@@ -108,6 +109,10 @@ export default class RelayCouloir {
       return; // Already removed
     }
 
+    if (socket.removedForIdleTimeout) {
+      this.hadIdleTimeoutRemoval = true;
+    }
+
     delete this.hostsSockets[socket.id];
     this.availableHosts = this.availableHosts.filter((s) => s.id !== socket.id);
 
@@ -118,13 +123,16 @@ export default class RelayCouloir {
       }
 
       const currentLastHostId = this.lastHostId;
+      // Idle timeouts (spare or bound) share one couloir-level flag so a later
+      // unflagged removal cannot restart a 300ms countdown over a longer grace.
+      const graceMs = this.hadIdleTimeoutRemoval && this.relay.hostSocketTimeout ? this.relay.hostSocketTimeout : 300;
       setTimeout(() => {
-        // We leave 300ms for the host server to initiate a new host socket.
-        // If no additional host joins in between we remove the couloir.
-        if (this.lastHostId === currentLastHostId) {
+        // We leave a short window for the host server to initiate a new host socket.
+        // Idle join timeouts use hostSocketTimeout so the expose client can reconnect.
+        if (!this.closed && this.lastHostId === currentLastHostId) {
           this.relay.removeCouloir(this);
         }
-      }, 300);
+      }, graceMs);
     }
   }
 
@@ -140,13 +148,31 @@ export default class RelayCouloir {
     this.pendingClients = this.pendingClients.filter((s) => s.id !== socket.id);
   }
 
+  /**
+   * Return a join socket to the idle pool after a public connection leaves this
+   * couloir (Host flip or client close). The expose-side HTTP loop stays waiting
+   * for the next request; no new JOIN is required.
+   */
+  returnHostSocket(socket) {
+    if (this.closed || this.quotaError || !this.hostsSockets[socket.id]) {
+      return;
+    }
+    if (this.availableHosts.some((s) => s.id === socket.id)) {
+      return;
+    }
+
+    socket.bound = false;
+    this.availableHosts.push(socket);
+    this.bindNextSocket();
+  }
+
   bindNextSocket() {
     this.log.debug(`Binding sockets clients:${this.pendingClients.length}, hosts: ${this.availableHosts.length}`);
     if (this.pendingClients.length && this.availableHosts.length) {
       const clientSocket = this.pendingClients.shift();
       const hostSocket = this.availableHosts.shift();
 
-      clientSocket.proxy(hostSocket);
+      clientSocket.bindToHost(hostSocket);
       this.bindNextSocket();
     }
   }
