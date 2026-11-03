@@ -7,7 +7,18 @@ import RelayCouloir, { TYPE_HOST } from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
 
 export class RelayServer {
-  constructor({ http, relayPort, log, verbose, domain, certService, password, controlApi, hostSocketTimeout } = {}) {
+  constructor({
+    http,
+    relayPort,
+    log,
+    verbose,
+    domain,
+    certService,
+    password,
+    controlApi,
+    hostSocketTimeout,
+    joinTimeout = 60_000,
+  } = {}) {
     this.http = http;
     this.relayPort = relayPort;
     this.log = log;
@@ -18,9 +29,10 @@ export class RelayServer {
     this.hostPrefix = this.domain.indexOf("couloir") > -1 ? "porte" : "couloir";
     this.couloirs = {};
     this.sockets = {};
-    this.keyToHost = {};
+    this.keyToCouloir = {};
     this.controlApi = controlApi;
     this.hostSocketTimeout = hostSocketTimeout;
+    this.joinTimeout = joinTimeout;
   }
 
   url() {
@@ -73,11 +85,10 @@ export class RelayServer {
       return;
     }
     couloir.closed = true;
+    couloir.clearJoinTimeout();
     delete this.couloirs[couloir.host];
-    for (const key of Object.keys(this.keyToHost)) {
-      if (this.keyToHost[key] === couloir.host) {
-        delete this.keyToHost[key];
-      }
+    if (this.keyToCouloir[couloir.key] === couloir) {
+      delete this.keyToCouloir[couloir.key];
     }
 
     this.log.info(`Closing couloir "${couloir.host}"`);
@@ -110,7 +121,8 @@ export class RelayServer {
     const couloir = await RelayCouloir.init(this, { couloirLabel, cliToken });
 
     this.couloirs[couloir.host] = couloir;
-    this.keyToHost[couloir.key] = couloir.host;
+    this.keyToCouloir[couloir.key] = couloir;
+    couloir.armJoinTimeout();
     socket.log.info(`Couloir opened "${couloir.host}"`);
 
     if (this.certService) {
@@ -123,8 +135,11 @@ export class RelayServer {
   }
 
   getCouloir(key) {
-    const host = this.keyToHost[key];
-    return host && this.couloirs[host];
+    const couloir = this.keyToCouloir[key];
+    if (!couloir || couloir.closed || couloir.key !== key) {
+      return;
+    }
+    return couloir;
   }
 
   onRemoveSocket(relaySocket) {

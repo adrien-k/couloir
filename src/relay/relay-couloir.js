@@ -47,11 +47,31 @@ export default class RelayCouloir {
 
     const host = `${couloirLabel}.${relay.domain}`;
 
-    if (relay.couloirs[host] && relay.couloirs[host].isActive()) {
+    if (relay.couloirs[host]) {
       throw new UserError(`Couloir host ${host} is already opened`);
     }
 
     return new RelayCouloir(relay, { host, cliToken, remainingQuota, controlApiCouloirClient });
+  }
+
+  armJoinTimeout() {
+    this.clearJoinTimeout();
+    const ms = this.relay.joinTimeout ?? 60_000;
+    this._joinTimeout = setTimeout(() => {
+      this._joinTimeout = null;
+      if (!this.closed && Object.keys(this.hostsSockets).length === 0) {
+        this.log.info(`Couloir expired before a host joined`);
+        this.relay.removeCouloir(this);
+      }
+    }, ms);
+    this._joinTimeout.unref?.();
+  }
+
+  clearJoinTimeout() {
+    if (this._joinTimeout) {
+      clearTimeout(this._joinTimeout);
+      this._joinTimeout = null;
+    }
   }
 
   async syncQuota(tranferredBytes = null) {
@@ -66,15 +86,6 @@ export default class RelayCouloir {
     }
   }
 
-  isActive() {
-    // Give 1 minute for a just-opened couloir to be active (ie: have a host socket)
-    if (this.openedAt < Date.now() - 1000 * 60) {
-      return true;
-    }
-
-    return Object.keys(this.hostsSockets).length > 0;
-  }
-
   async updateQuota(bytes) {
     this.unsyncedBytes += bytes;
 
@@ -87,6 +98,7 @@ export default class RelayCouloir {
   }
 
   addHostSocket(socket) {
+    this.clearJoinTimeout();
     socket.couloir = this;
     socket.setType(TYPE_HOST, this.host);
     this.lastHostId = socket.id;

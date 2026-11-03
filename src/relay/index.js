@@ -22,6 +22,8 @@ export default function relay({
   log = loggerFactory(),
   // After 60s of inactivity on a host socket, we close it to prevent orphan sockets
   hostSocketTimeout = 60000,
+  // Drop a couloir that is opened but never joined so labels cannot be reserved forever.
+  joinTimeout = 60000,
 }) {
   let certService;
   if (!http) {
@@ -59,6 +61,7 @@ export default function relay({
     password,
     controlApi,
     hostSocketTimeout,
+    joinTimeout,
   });
 
   return {

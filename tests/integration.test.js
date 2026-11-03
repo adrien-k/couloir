@@ -609,6 +609,60 @@ describe("HTTP control protocol", () => {
     });
   });
 
+  it("rejects a second open of the same label before the first host joins", async () => {
+    await withRelay(async () => {
+      const first = await openCouloirHttp({ couloirLabel: "app" });
+      assert.equal(first.status, 200);
+      const second = await openCouloirHttp({ couloirLabel: "app" });
+      assert.equal(second.status, 400);
+      assert.match(second.body.error, /already opened/);
+
+      const wsKey = crypto.randomBytes(16).toString("base64");
+      const socket = await createRelayConnection();
+      socket.write(
+        `GET /_couloir/join HTTP/1.1\r\n` +
+          `Host: test.local\r\n` +
+          `Connection: Upgrade\r\n` +
+          `Upgrade: websocket\r\n` +
+          `Sec-WebSocket-Version: 13\r\n` +
+          `Sec-WebSocket-Key: ${wsKey}\r\n` +
+          `Sec-WebSocket-Protocol: ${COULOIR_WS_PROTOCOL}\r\n` +
+          `X-Couloir-Key: ${first.body.key}\r\n\r\n`,
+      );
+      const response = (await socketDataPromise(socket)).toString();
+      assert.match(response, /^HTTP\/1.1 101 Switching Protocols/);
+    });
+  });
+
+  it("expires an unjoined couloir so the label and old key cannot be reused", async () => {
+    relayConfig.joinTimeout = 80;
+    await withRelay(async () => {
+      const opened = await openCouloirHttp({ couloirLabel: "app" });
+      assert.equal(opened.status, 200);
+      await new Promise((r) => setTimeout(r, 150));
+
+      const staleJoin = await createRelayConnection();
+      const wsKey = crypto.randomBytes(16).toString("base64");
+      staleJoin.write(
+        `GET /_couloir/join HTTP/1.1\r\n` +
+          `Host: test.local\r\n` +
+          `Connection: Upgrade\r\n` +
+          `Upgrade: websocket\r\n` +
+          `Sec-WebSocket-Version: 13\r\n` +
+          `Sec-WebSocket-Key: ${wsKey}\r\n` +
+          `Sec-WebSocket-Protocol: ${COULOIR_WS_PROTOCOL}\r\n` +
+          `X-Couloir-Key: ${opened.body.key}\r\n\r\n`,
+      );
+      const staleResponse = parseHttpJson(await socketDataPromise(staleJoin));
+      assert.equal(staleResponse.status, 400);
+      assert.match(staleResponse.body.error, /Invalid couloir key/);
+
+      const reused = await openCouloirHttp({ couloirLabel: "app" });
+      assert.equal(reused.status, 200);
+      assert.notEqual(reused.body.key, opened.body.key);
+    });
+  });
+
   it("joins a couloir with a WebSocket upgrade", async () => {
     await withRelay(async () => {
       const { body: opened } = await openCouloirHttp();
