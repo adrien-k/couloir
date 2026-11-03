@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 
+import { normalizeCouloirLabel } from "../couloir-label.js";
 import UserError from "../user-error.js";
 
 export const TYPE_HOST = "host";
@@ -27,6 +28,8 @@ export default class RelayCouloir {
       throw new UserError(`Please provide a CLI key to use Couloir on ${relay.domain}`);
     }
 
+    couloirLabel = normalizeCouloirLabel(couloirLabel);
+
     let remainingQuota, controlApiCouloirClient;
     if (relay.controlApi.enabled()) {
       const apiCouloir = await relay.controlApi.open({ cliToken, couloirLabel });
@@ -38,7 +41,7 @@ export default class RelayCouloir {
         );
       }
 
-      couloirLabel = apiCouloir.couloir;
+      couloirLabel = normalizeCouloirLabel(apiCouloir.couloir);
       controlApiCouloirClient = relay.controlApi.couloirControlClient(couloirLabel, cliToken);
     }
 

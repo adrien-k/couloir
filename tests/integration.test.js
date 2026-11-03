@@ -599,6 +599,16 @@ describe("HTTP control protocol", () => {
     });
   });
 
+  it("rejects path-shaped and dotted couloir labels", async () => {
+    await withRelay(async () => {
+      for (const couloirLabel of ["../../../tmp/pwn", "www.login", "foo/bar"]) {
+        const { status, body } = await openCouloirHttp({ couloirLabel });
+        assert.equal(status, 400);
+        assert.match(body.error, /Invalid couloir name/);
+      }
+    });
+  });
+
   it("joins a couloir with a WebSocket upgrade", async () => {
     await withRelay(async () => {
       const { body: opened } = await openCouloirHttp();
