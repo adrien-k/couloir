@@ -9,12 +9,13 @@ import { loggerFactory, errorMessage } from "./logger.js";
 import relay from "./relay/index.js";
 import expose from "./expose/index.js";
 import logo from "./logo.js";
-import { settings, saveSetting } from "./config.js";
+import { settings, saveSetting, redactedSettings } from "./config.js";
 
 function printConfig(argv) {
-  const settingKeys = Object.keys(settings);
+  const redacted = redactedSettings();
+  const settingKeys = Object.keys(redacted);
   if (settingKeys.length) {
-    argv.log.raw(`Using stored configuration:\n${settingKeys.map((k) => `- ${k}: ${settings[k]}`).join("\n")}\n`);
+    argv.log.raw(`Using stored configuration:\n${settingKeys.map((k) => `- ${k}: ${redacted[k]}`).join("\n")}\n`);
   }
 }
 
@@ -33,7 +34,10 @@ yargs(hideBin(process.argv))
   .middleware((argv) => ({
     ...argv,
     relayPort: argv.relayPort || (argv.http ? 80 : 443),
-    log: loggerFactory({ ...argv, hide: argv.password?.length ? [argv.password] : [] }),
+    log: loggerFactory({
+      ...argv,
+      hide: [argv.password, argv.cliToken].filter((value) => value?.length),
+    }),
   }))
   .command("version", "Show the current version\n", ({ argv }) => {
     argv.log.raw(version);
@@ -183,7 +187,7 @@ yargs(hideBin(process.argv))
         }),
     async (argv) => {
       saveSetting(argv.config, argv.value);
-      argv.log.raw(`Setting "${argv.config}" saved. Settings:\n${JSON.stringify(settings, null, 2)}`);
+      argv.log.raw(`Setting "${argv.config}" saved. Settings:\n${JSON.stringify(redactedSettings(), null, 2)}`);
     },
   )
   .command(
@@ -195,7 +199,7 @@ yargs(hideBin(process.argv))
       }),
     async (argv) => {
       saveSetting(argv.config);
-      argv.log.raw(`Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(settings, null, 2)}`);
+      argv.log.raw(`Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(redactedSettings(), null, 2)}`);
     },
   )
   .option("verbose", {

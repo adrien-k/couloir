@@ -1,11 +1,12 @@
 import os from "os";
-import { join } from "node:path";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 import UserError from "./user-error.js";
 
 export const CONFIG_DIR = join(os.homedir(), ".couloir");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
+const SECRET_KEYS = new Set(["password", "cliToken", "cli-token"]);
 
 const readConfigSync = () => {
   try {
@@ -17,12 +18,22 @@ const readConfigSync = () => {
   }
 };
 
+export function writeConfigFile(file, data) {
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(data, null, 2), { mode: 0o600 });
+  chmodSync(file, 0o600);
+}
+
 const saveConfigSync = () => {
   mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(CONFIG_FILE, JSON.stringify(settings, null, 2));
+  writeConfigFile(CONFIG_FILE, settings);
 };
 
-export const settings = readConfigSync();
+export function redactedSettings(values = settings) {
+  return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, SECRET_KEYS.has(key) ? "<hidden>" : value]));
+}
+
+export const settings = readConfigSync() || {};
 
 const ALLOWED_SETTINGS = [
   "relay-host",
