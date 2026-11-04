@@ -66,6 +66,12 @@ yargs(hideBin(process.argv))
           describe: `Require a password to access the relay.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
           type: "string",
         })
+        .option("open-relay", {
+          describe:
+            "Allow anyone who can reach the relay to open couloirs. Required (or --password) for self-hosted relays.",
+          type: "boolean",
+          default: false,
+        })
         .option("email", {
           describe:
             "Email used for Let's Encrypt cert generation, used to notify about expiration. Default is admin@<domain>.",

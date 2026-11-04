@@ -93,6 +93,7 @@ beforeEach(() => {
     relayPort: RELAY_PORT,
     domain: "test.local",
     http: true,
+    openRelay: true,
     log: logFactory("relay"),
     verbose: true,
   };
@@ -560,6 +561,15 @@ it("returns 502 when closing local server", async () => {
     // New socket
     assert.equal((await sendRelayRequest()).subarray(0, 15).toString(), "HTTP/1.1 200 OK");
   });
+});
+
+it("refuses to start a self-hosted relay without --password or --open-relay", async () => {
+  relayConfig.openRelay = false;
+  const relayServer = relay(relayConfig);
+  await assert.rejects(
+    () => relayServer.start(),
+    /Refusing to start an open relay/,
+  );
 });
 
 describe("HTTP control protocol", () => {

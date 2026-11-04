@@ -5,6 +5,7 @@ import { loggerFactory } from "../logger.js";
 import { RelayServer } from "./relay-server.js";
 import { CONFIG_DIR } from "../config.js";
 import ControlApi from "./control-api.js";
+import UserError from "../user-error.js";
 
 export default function relay({
   verbose,
@@ -16,6 +17,7 @@ export default function relay({
   wildcardCert,
   wildcardKey,
   password,
+  openRelay = false,
   controlHost = process.env.CONTROL_HOST,
   controlPort = process.env.CONTROL_PORT,
   controlApiKey = process.env.CONTROL_API_KEY,
@@ -74,6 +76,12 @@ export default function relay({
 
   return {
     start: async () => {
+      if (!controlApi.enabled() && !password && !openRelay) {
+        throw new UserError(
+          "Refusing to start an open relay. Pass --password <secret> to require a password, or --open-relay to allow anyone to open couloirs.",
+        );
+      }
+
       await controlApi.init();
 
       if (certService) {
