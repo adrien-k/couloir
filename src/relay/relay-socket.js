@@ -164,6 +164,8 @@ export default class RelaySocket extends CouloirClientSocket {
   }
 
   async #pipeToControl(req) {
+    // Apex traffic is forwarded as-is to CONTROL_HOST. The relay API key is not
+    // added here — every control-plane route must authenticate on its own.
     const controlSocket = this.relay.controlApi.createSocket();
 
     try {

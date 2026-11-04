@@ -157,6 +157,8 @@ Typical layout:
 
 Control routes (`/_couloir/open`, `/_couloir/join`) are only intercepted on the **apex** host. The same paths on a couloir subdomain are tunneled to your local app.
 
+When `CONTROL_HOST` is set, every other request on the apex host is proxied to that process. Treat it as a public reverse proxy: the control plane must authenticate its own routes. The relay’s `X-API-KEY` is only sent on the relay’s own `fetch` calls, not on this proxied traffic.
+
 ### Run the relay on a different port
 
 Run the relay service on a port different from 443. Note that unless you run in HTTP-only, the port 80 will
