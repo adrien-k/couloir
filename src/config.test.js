@@ -8,10 +8,11 @@ import { redactedSettings, writeConfigFile } from "./config.js";
 
 describe("redactedSettings", () => {
   it("hides password and cli-token values", () => {
-    assert.deepEqual(
-      redactedSettings({ relayHost: "example.com", password: "secret", cliToken: "tok_xxx" }),
-      { relayHost: "example.com", password: "<hidden>", cliToken: "<hidden>" },
-    );
+    assert.deepEqual(redactedSettings({ relayHost: "example.com", password: "secret", cliToken: "tok_xxx" }), {
+      relayHost: "example.com",
+      password: "<hidden>",
+      cliToken: "<hidden>",
+    });
   });
 });
 

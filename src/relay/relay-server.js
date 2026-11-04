@@ -5,6 +5,7 @@ import UserError from "../user-error.js";
 import RelaySocket from "./relay-socket.js";
 import RelayCouloir, { TYPE_HOST } from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
+import { secretsEqual } from "../secrets-equal.js";
 
 export class RelayServer {
   #openAttempts;
@@ -132,7 +133,7 @@ export class RelayServer {
       }
     }
 
-    if (this.password && password !== this.password) {
+    if (this.password && !secretsEqual(password, this.password)) {
       throw new UserError(
         password ? "Invalid Relay password." : "This Relay require a password. Use the --password <password> option.",
       );
@@ -174,7 +175,7 @@ export class RelayServer {
 
   getCouloir(key) {
     const couloir = this.keyToCouloir[key];
-    if (!couloir || couloir.closed || couloir.key !== key) {
+    if (!couloir || couloir.closed || !secretsEqual(couloir.key, key)) {
       return;
     }
     return couloir;

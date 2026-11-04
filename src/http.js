@@ -91,9 +91,9 @@ body {
       htmlText +
       "</div></body></html>";
 
-    return `HTTP/1.1 ${status}\r\nContent-Type: text/html\r\nContent-Length: ${html.length}\r\n\r\n${html}`;
+    return `HTTP/1.1 ${status}\r\nContent-Type: text/html\r\nContent-Length: ${Buffer.byteLength(html)}\r\n\r\n${html}`;
   } else {
-    return `HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nContent-Length: ${text.length}\r\n\r\n${text}`;
+    return `HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(text)}\r\n\r\n${text}`;
   }
 }
 
@@ -102,6 +102,11 @@ class HttpMessage {
     this.headDone = false;
     this.body = new PassThrough();
     this.bodyLength = 0;
+    this.bodyReceived = 0;
+    // null = unbounded (close-delimited, chunked, or WebSocket)
+    this.bodyExpected = null;
+    this.bodyComplete = false;
+    this.unread = null;
     this.onEnd = [];
   }
 
@@ -122,7 +127,8 @@ class HttpMessage {
         delete this.headBuffer;
         this.parseHead(head);
         this.headDone = true;
-        return this.body.write(bodyChunk);
+        this.initBodyFraming();
+        return this.feedBody(bodyChunk);
       }
       if (this.headBuffer.length > MAX_HTTP_HEADER_BYTES) {
         this.error = new UserError("HTTP headers too large.");
@@ -130,7 +136,7 @@ class HttpMessage {
         return;
       }
     } else {
-      return this.body.write(chunk);
+      return this.feedBody(chunk);
     }
 
     // We received a chunk that did not qualify as http head. Probably a protocol error.
@@ -142,6 +148,95 @@ class HttpMessage {
 
       return;
     }
+  }
+
+  initBodyFraming() {
+    if (this.isWebSocket()) {
+      return;
+    }
+
+    const statusNum = this.status != null ? Number.parseInt(this.status, 10) : NaN;
+    if (statusNum === 101) {
+      return;
+    }
+
+    const transferEncoding = getHeader(this.headers, "Transfer-Encoding")?.[0]?.toLowerCase();
+    if (transferEncoding?.includes("chunked")) {
+      return;
+    }
+
+    const cl = getHeader(this.headers, "Content-Length");
+    if (cl !== undefined) {
+      const n = Number.parseInt(cl[0], 10);
+      this.bodyExpected = Number.isFinite(n) && n >= 0 ? n : 0;
+      return;
+    }
+
+    if (this.method === "GET" || this.method === "HEAD") {
+      this.bodyExpected = 0;
+      return;
+    }
+
+    if (
+      Number.isFinite(statusNum) &&
+      (statusNum === 204 || statusNum === 304 || (statusNum >= 100 && statusNum < 200))
+    ) {
+      this.bodyExpected = 0;
+    }
+  }
+
+  feedBody(chunk) {
+    if (this.bodyExpected == null) {
+      if (chunk?.length) {
+        return this.body.write(chunk);
+      }
+      return;
+    }
+
+    if (this.bodyComplete) {
+      this.appendUnread(chunk);
+      return;
+    }
+
+    const remaining = this.bodyExpected - this.bodyReceived;
+    if (remaining <= 0) {
+      this.finishBody();
+      this.appendUnread(chunk);
+      return;
+    }
+
+    if (!chunk?.length) {
+      return;
+    }
+
+    if (chunk.length <= remaining) {
+      const canContinue = this.body.write(chunk);
+      this.bodyReceived += chunk.length;
+      if (this.bodyReceived >= this.bodyExpected) {
+        this.finishBody();
+      }
+      return canContinue;
+    }
+
+    this.body.write(chunk.subarray(0, remaining));
+    this.bodyReceived = this.bodyExpected;
+    this.finishBody();
+    this.appendUnread(chunk.subarray(remaining));
+  }
+
+  finishBody() {
+    if (this.bodyComplete) {
+      return;
+    }
+    this.bodyComplete = true;
+    this.body.end();
+  }
+
+  appendUnread(chunk) {
+    if (!chunk?.length) {
+      return;
+    }
+    this.unread = this.unread ? Buffer.concat([this.unread, chunk]) : Buffer.from(chunk);
   }
 
   async waitForHead(socket) {
@@ -199,9 +294,15 @@ class HttpMessage {
 
   /**
    * Call this when the http message is completed and the body is fully streamed.
+   * Bytes past Content-Length (or a GET/HEAD with no body) are unshifted so the
+   * next keep-alive message on this socket can be parsed.
    */
   end() {
     this.onEnd.forEach((fn) => fn());
+    if (this.unread?.length && this.socket && !this.socket.destroyed) {
+      this.socket.unshift(this.unread);
+    }
+    this.unread = null;
   }
 
   static async nextOnSocket(socket) {

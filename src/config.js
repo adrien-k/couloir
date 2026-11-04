@@ -30,7 +30,9 @@ const saveConfigSync = () => {
 };
 
 export function redactedSettings(values = settings) {
-  return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, SECRET_KEYS.has(key) ? "<hidden>" : value]));
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, SECRET_KEYS.has(key) ? "<hidden>" : value]),
+  );
 }
 
 export const settings = readConfigSync() || {};
