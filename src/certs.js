@@ -4,12 +4,13 @@
 
 import fs from "fs";
 import tls from "node:tls";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import http from "node:http";
 import util from "node:util";
 import { X509Certificate } from "node:crypto";
 
 import * as acme from "acme-client";
+import { isDnsLabel } from "./couloir-label.js";
 
 const readFile = util.promisify(fs.readFile);
 const writeFile = util.promisify(fs.writeFile);
@@ -19,6 +20,54 @@ const mkdir = util.promisify(fs.mkdir);
 
 const HTTP_SERVER_PORT = 80;
 const CLIENT_KEY_FILE = "acme-client.key";
+
+/** Strip a :port suffix from a Host header. IPv6 Hosts are not used for ACME redirects. */
+export function hostnameFromHostHeader(host) {
+  if (!host) {
+    return "";
+  }
+  return String(host).split(":")[0].toLowerCase();
+}
+
+/** Apex or a single-label subdomain of `domain`. */
+export function isAllowedRedirectHost(host, domain) {
+  const hostname = hostnameFromHostHeader(host);
+  if (!hostname || !domain) {
+    return false;
+  }
+  const apex = domain.toLowerCase();
+  if (hostname === apex) {
+    return true;
+  }
+  if (!hostname.endsWith(`.${apex}`)) {
+    return false;
+  }
+  return isDnsLabel(hostname.slice(0, -(apex.length + 1)));
+}
+
+/** Resolve a cert subdirectory under certsDirectory; reject path-shaped servernames. */
+export function safeCertDirectory(certsDirectory, servername) {
+  if (typeof servername !== "string" || !servername || servername.length > 253) {
+    throw new Error("Invalid servername");
+  }
+  const labels = servername.split(".");
+  for (let i = 0; i < labels.length; i++) {
+    if (i === 0 && labels[i] === "*") {
+      continue;
+    }
+    if (!isDnsLabel(labels[i])) {
+      throw new Error("Invalid servername");
+    }
+  }
+
+  const certDirectory = join(certsDirectory, servername);
+  const root = resolve(certsDirectory);
+  const resolved = resolve(certDirectory);
+  if (resolved !== root && !resolved.startsWith(root + sep)) {
+    throw new Error("Invalid certificate path");
+  }
+  return certDirectory;
+}
 
 async function ensureDir(dir) {
   await mkdir(dir, { recursive: true });
@@ -61,7 +110,7 @@ class Certificate {
     }
 
     await ensureDir(certsDirectory);
-    const certDirectory = join(certsDirectory, servername);
+    const certDirectory = safeCertDirectory(certsDirectory, servername);
     await mkdir(certDirectory, { recursive: true });
     await writeFile(join(certDirectory, "cert.key"), this.key);
     await writeFile(join(certDirectory, "cert.pem"), this.cert);
@@ -220,7 +269,7 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
       serverLog.info(`Received challenge request for token=${token}`);
 
       /* ACME challenge response */
-      if (token in challengeResponses) {
+      if (Object.hasOwn(challengeResponses, token)) {
         serverLog.debug(`Serving challenge response HTTP 200 token=${token}`);
         res.writeHead(200);
         res.end(challengeResponses[token]);
@@ -234,9 +283,16 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
       return;
     }
 
-    /* HTTP 302 redirect */
-    serverLog.info(`HTTP 302 ${req.headers.host}${req.url}`);
-    res.writeHead(302, { Location: `https://${req.headers.host}${req.url}` });
+    /* HTTP 302 redirect — only to this relay's apex or a single-label subdomain */
+    const hostname = hostnameFromHostHeader(req.headers.host);
+    if (!isAllowedRedirectHost(req.headers.host, domain)) {
+      serverLog.info(`HTTP 400 invalid Host ${req.headers.host}`);
+      res.writeHead(400);
+      res.end();
+      return;
+    }
+    serverLog.info(`HTTP 302 ${hostname}${req.url}`);
+    res.writeHead(302, { Location: `https://${hostname}${req.url}` });
     res.end();
   });
 
