@@ -24,6 +24,10 @@ export default function relay({
   hostSocketTimeout = 60000,
   // Drop a couloir that is opened but never joined so labels cannot be reserved forever.
   joinTimeout = 60000,
+  maxCouloirs = 100,
+  maxConnections = 500,
+  openRateMax = 30,
+  openRateWindowMs = 60000,
 }) {
   let certService;
   if (!http) {
@@ -62,6 +66,10 @@ export default function relay({
     controlApi,
     hostSocketTimeout,
     joinTimeout,
+    maxCouloirs,
+    maxConnections,
+    openRateMax,
+    openRateWindowMs,
   });
 
   return {

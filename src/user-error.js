@@ -1,7 +1,9 @@
 class UserError extends Error {
-  constructor(message) {
+  constructor(message, { status = 400, statusMessage = "Bad Request" } = {}) {
     super(message);
     this.isUserError = true;
+    this.status = status;
+    this.statusMessage = statusMessage;
   }
 }
 

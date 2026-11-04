@@ -7,6 +7,8 @@ import RelayCouloir, { TYPE_HOST } from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
 
 export class RelayServer {
+  #openAttempts;
+
   constructor({
     http,
     relayPort,
@@ -18,6 +20,10 @@ export class RelayServer {
     controlApi,
     hostSocketTimeout,
     joinTimeout = 60_000,
+    maxCouloirs = 100,
+    maxConnections = 500,
+    openRateMax = 30,
+    openRateWindowMs = 60_000,
   } = {}) {
     this.http = http;
     this.relayPort = relayPort;
@@ -33,6 +39,11 @@ export class RelayServer {
     this.controlApi = controlApi;
     this.hostSocketTimeout = hostSocketTimeout;
     this.joinTimeout = joinTimeout;
+    this.maxCouloirs = maxCouloirs;
+    this.maxConnections = maxConnections;
+    this.openRateMax = openRateMax;
+    this.openRateWindowMs = openRateWindowMs;
+    this.#openAttempts = new Map();
   }
 
   url() {
@@ -98,10 +109,19 @@ export class RelayServer {
 
   async openCouloir(socket, { couloirLabel, password, version: clientVersion, cliToken }) {
     // HTTP control protocol is a breaking change; require matching patch versions.
+    this.#rateLimitOpen(socket.ip);
+
     if (!clientVersion || !equalVersions(clientVersion, version, "patch")) {
       throw new UserError(
         `Client version (${clientVersion || "unknown"}) is not compatible with server version (${version}).`,
       );
+    }
+
+    if (Object.keys(this.couloirs).length >= this.maxCouloirs) {
+      throw new UserError("Relay is at capacity. Try again later.", {
+        status: 503,
+        statusMessage: "Service Unavailable",
+      });
     }
     if (!this.controlApi.enabled() && !couloirLabel) {
       couloirLabel = this.hostPrefix;
@@ -134,6 +154,24 @@ export class RelayServer {
     return couloir;
   }
 
+  #rateLimitOpen(ip) {
+    const now = Date.now();
+    const key = ip || "unknown";
+    if (this.#openAttempts.size > 10_000) {
+      this.#openAttempts.clear();
+    }
+    const times = (this.#openAttempts.get(key) || []).filter((t) => now - t < this.openRateWindowMs);
+    if (times.length >= this.openRateMax) {
+      this.#openAttempts.set(key, times);
+      throw new UserError("Too many open attempts. Please try again later.", {
+        status: 429,
+        statusMessage: "Too Many Requests",
+      });
+    }
+    times.push(now);
+    this.#openAttempts.set(key, times);
+  }
+
   getCouloir(key) {
     const couloir = this.keyToCouloir[key];
     if (!couloir || couloir.closed || couloir.key !== key) {
@@ -151,6 +189,12 @@ export class RelayServer {
 
   #onConnection(socket) {
     if (this.stopped) {
+      socket.end();
+      return;
+    }
+
+    if (Object.keys(this.sockets).length >= this.maxConnections) {
+      socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
       socket.end();
       return;
     }

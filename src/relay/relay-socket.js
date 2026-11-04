@@ -32,7 +32,12 @@ export default class RelaySocket extends CouloirClientSocket {
     this.hijacked = false;
 
     this.log = this.relay.log.tags([this.ip, `#${this.id}`]);
-    this.#listen();
+    this.#listen().catch((err) => {
+      this.log.error(err);
+      if (!this.socket.destroyed) {
+        this.socket.destroy();
+      }
+    });
   }
 
   setType(type, host) {
@@ -123,11 +128,17 @@ export default class RelaySocket extends CouloirClientSocket {
   }
 
   async end({ force = false } = {}) {
-    if (!this.bound || force) {
-      await new Promise((r) => {
-        this.socket.end(r);
-      });
+    if (this.bound && !force) {
+      return;
     }
+    if (this.socket.destroyed) {
+      return;
+    }
+    await new Promise((resolve) => {
+      const done = () => resolve();
+      this.socket.once("close", done);
+      this.socket.end(done);
+    });
   }
 
   #quotaExceeded(hostSocket) {
@@ -259,7 +270,7 @@ export default class RelaySocket extends CouloirClientSocket {
         this.#writeJson(200, "OK", { key: couloir.key, host: couloir.host });
       } catch (e) {
         if (e.isUserError) {
-          this.#writeJson(400, "Bad Request", { error: e.message });
+          this.#writeJson(e.status || 400, e.statusMessage || "Bad Request", { error: e.message });
         } else {
           this.log.error(e);
           this.#writeJson(500, "Internal Server Error", {
@@ -421,6 +432,12 @@ export default class RelaySocket extends CouloirClientSocket {
     } catch (e) {
       if (e.code === "INVALID_PROTOCOL") {
         this.socket.write(`HTTP/1.1 400 Bad Request\r\n\r\n${e.message}.`);
+        this.socket.end();
+        return;
+      }
+
+      if (e.code === "HEADER_TOO_LARGE") {
+        this.socket.write(`HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n`);
         this.socket.end();
         return;
       }

@@ -1,5 +1,8 @@
 import { PassThrough } from "node:stream";
 import UserError from "./user-error.js";
+
+/** Cap header buffering so a slowloris client cannot grow headBuffer without bound. */
+export const MAX_HTTP_HEADER_BYTES = 16 * 1024;
 export function parseHttp(head) {
   const headLines = head.replace(/\r\n$/, "").split("\r\n");
   return { startLine: headLines[0], headers: parseHeaders(headLines.slice(1)) };
@@ -109,12 +112,22 @@ class HttpMessage {
       this.headBuffer = Buffer.concat([this.headBuffer || Buffer.from([]), chunk]);
       const bodySeparator = this.headBuffer.indexOf("\r\n\r\n");
       if (bodySeparator > -1) {
+        if (bodySeparator > MAX_HTTP_HEADER_BYTES) {
+          this.error = new UserError("HTTP headers too large.");
+          this.error.code = "HEADER_TOO_LARGE";
+          return;
+        }
         const bodyChunk = this.headBuffer.subarray(bodySeparator + 4);
         const head = this.headBuffer.subarray(0, bodySeparator).toString("utf8");
         delete this.headBuffer;
         this.parseHead(head);
         this.headDone = true;
         return this.body.write(bodyChunk);
+      }
+      if (this.headBuffer.length > MAX_HTTP_HEADER_BYTES) {
+        this.error = new UserError("HTTP headers too large.");
+        this.error.code = "HEADER_TOO_LARGE";
+        return;
       }
     } else {
       return this.body.write(chunk);
@@ -132,6 +145,9 @@ class HttpMessage {
   }
 
   async waitForHead(socket) {
+    if (socket.destroyed) {
+      throw "EARLY_SOCKET_CLOSED";
+    }
     return new Promise((resolve, reject) => {
       const onEnd = () => {
         reject("EARLY_SOCKET_CLOSED");
@@ -153,6 +169,7 @@ class HttpMessage {
 
       this.onEnd.push(() => {
         socket.off("data", onData);
+        socket.off("end", onEnd);
       });
     });
   }

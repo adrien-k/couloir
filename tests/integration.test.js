@@ -686,6 +686,61 @@ describe("HTTP control protocol", () => {
     });
   });
 
+  it("rejects headers that exceed the size cap", async () => {
+    await withRelay(async () => {
+      const response = await sendRelayRequest({
+        httpRequest: `GET / HTTP/1.1\r\nHost: test.local\r\nX-Pad: ${"a".repeat(20 * 1024)}\r\n\r\n`,
+      });
+      assert.match(response.toString(), /^HTTP\/1.1 431 /);
+    });
+  });
+
+  it("rejects opens beyond maxCouloirs", async () => {
+    relayConfig.maxCouloirs = 1;
+    await withRelay(async () => {
+      const first = await openCouloirHttp({ couloirLabel: "one" });
+      assert.equal(first.status, 200);
+      const second = await openCouloirHttp({ couloirLabel: "two" });
+      assert.equal(second.status, 503);
+      assert.match(second.body.error, /at capacity/);
+    });
+  });
+
+  it("rate-limits POST /_couloir/open", async () => {
+    relayConfig.openRateMax = 2;
+    relayConfig.openRateWindowMs = 60_000;
+    await withRelay(async () => {
+      assert.equal((await openCouloirHttp({ couloirLabel: "a" })).status, 200);
+      assert.equal((await openCouloirHttp({ couloirLabel: "b" })).status, 200);
+      const third = await openCouloirHttp({ couloirLabel: "c" });
+      assert.equal(third.status, 429);
+      assert.match(third.body.error, /Too many open attempts/);
+    });
+  });
+
+  it("rejects connections beyond maxConnections", async () => {
+    relayConfig.maxConnections = 1;
+    await withRelay(async () => {
+      const held = await createRelayConnection();
+      try {
+        const response = await new Promise((resolve, reject) => {
+          const second = net.createConnection({ port: RELAY_PORT });
+          const chunks = [];
+          second.setTimeout(2000, () => {
+            second.destroy();
+            reject(new Error("timed out waiting for 503"));
+          });
+          second.on("error", reject);
+          second.on("data", (c) => chunks.push(c));
+          second.on("end", () => resolve(Buffer.concat(chunks)));
+        });
+        assert.match(response.toString(), /^HTTP\/1.1 503 /);
+      } finally {
+        held.destroy();
+      }
+    });
+  });
+
   it("responds to GET /up on the apex host", async () => {
     await withRelay(async () => {
       const response = await sendRelayRequest({
@@ -721,9 +776,13 @@ describe("with a control API", () => {
     controlServer.setQuota("cli-token-ko", -500);
   });
 
-  before(() => controlServer.listen(30022));
+  before(async () => {
+    await controlServer.listen(30022);
+  });
 
-  after(() => controlServer.close());
+  after(async () => {
+    await controlServer.close();
+  });
 
   it("can proxy an http request through default couloir", async () => {
     await setup({}, async () => {
