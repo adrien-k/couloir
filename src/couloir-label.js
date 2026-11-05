@@ -27,3 +27,11 @@ export function normalizeCouloirLabel(couloirLabel) {
   }
   return label;
 }
+
+/** Require a DNS label from a control-API (or other untrusted) response. Empty is an error. */
+export function requireDnsLabel(couloirLabel) {
+  if (couloirLabel == null || couloirLabel === "") {
+    throw new UserError("Invalid couloir name. Use a single DNS label (letters, digits, hyphens; 1-63 characters).");
+  }
+  return normalizeCouloirLabel(couloirLabel);
+}

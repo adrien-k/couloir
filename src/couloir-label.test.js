@@ -1,7 +1,7 @@
 import { it, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { isDnsLabel, normalizeCouloirLabel } from "./couloir-label.js";
+import { isDnsLabel, normalizeCouloirLabel, requireDnsLabel } from "./couloir-label.js";
 
 describe("isDnsLabel", () => {
   it("accepts a single RFC 1123 label", () => {
@@ -38,5 +38,17 @@ describe("normalizeCouloirLabel", () => {
     assert.throws(() => normalizeCouloirLabel("../../../tmp/pwn"), /Invalid couloir name/);
     assert.throws(() => normalizeCouloirLabel("www.login"), /Invalid couloir name/);
     assert.throws(() => normalizeCouloirLabel("foo/bar"), /Invalid couloir name/);
+  });
+});
+
+describe("requireDnsLabel", () => {
+  it("rejects empty or missing values", () => {
+    assert.throws(() => requireDnsLabel(""), /Invalid couloir name/);
+    assert.throws(() => requireDnsLabel(null), /Invalid couloir name/);
+    assert.throws(() => requireDnsLabel(undefined), /Invalid couloir name/);
+  });
+
+  it("lowercases a valid label", () => {
+    assert.equal(requireDnsLabel("App"), "app");
   });
 });

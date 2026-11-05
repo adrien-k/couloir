@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-import { normalizeCouloirLabel } from "../couloir-label.js";
+import { normalizeCouloirLabel, requireDnsLabel } from "../couloir-label.js";
 import UserError from "../user-error.js";
 
 export const TYPE_HOST = "host";
@@ -41,7 +41,7 @@ export default class RelayCouloir {
         );
       }
 
-      couloirLabel = normalizeCouloirLabel(apiCouloir.couloir);
+      couloirLabel = requireDnsLabel(apiCouloir.couloir);
       controlApiCouloirClient = relay.controlApi.couloirControlClient(couloirLabel, cliToken);
     }
 
