@@ -2,8 +2,19 @@ import { it, describe } from "node:test";
 import assert from "node:assert/strict";
 import { join, resolve } from "node:path";
 import os from "node:os";
+import { mkdtempSync, writeFileSync, chmodSync, statSync } from "node:fs";
 
-import { hostnameFromHostHeader, isAllowedRedirectHost, prefetchCert, safeCertDirectory } from "./certs.js";
+import {
+  hostnameFromHostHeader,
+  isAllowedRedirectHost,
+  prefetchCert,
+  safeCertDirectory,
+  ensureSecretDir,
+  writeSecretFile,
+  tightenSecretFile,
+  SECRET_FILE_MODE,
+  SECRET_DIR_MODE,
+} from "./certs.js";
 
 describe("ACME redirect Host allowlist", () => {
   it("allows the apex and a single-label subdomain", () => {
@@ -39,6 +50,27 @@ describe("safeCertDirectory", () => {
 describe("hostnameFromHostHeader", () => {
   it("strips a port suffix", () => {
     assert.equal(hostnameFromHostHeader("example.com:80"), "example.com");
+  });
+});
+
+describe("secret file permissions", () => {
+  it("creates key files and directories with 0600 / 0700", async () => {
+    const dir = mkdtempSync(join(os.tmpdir(), "couloir-certs-secret-"));
+    await ensureSecretDir(join(dir, "host"));
+    await writeSecretFile(join(dir, "host", "cert.key"), "dummy-key");
+    assert.equal(statSync(join(dir, "host")).mode & 0o777, SECRET_DIR_MODE);
+    assert.equal(statSync(join(dir, "host", "cert.key")).mode & 0o777, SECRET_FILE_MODE);
+  });
+
+  it("tightens an existing world-readable key on load", async () => {
+    const dir = mkdtempSync(join(os.tmpdir(), "couloir-certs-secret-"));
+    const keyFile = join(dir, "acme-client.key");
+    writeFileSync(keyFile, "old-key", { mode: 0o644 });
+    await tightenSecretFile(keyFile);
+    assert.equal(statSync(keyFile).mode & 0o777, SECRET_FILE_MODE);
+    chmodSync(keyFile, 0o644);
+    await tightenSecretFile(keyFile);
+    assert.equal(statSync(keyFile).mode & 0o777, SECRET_FILE_MODE);
   });
 });
 
