@@ -53,6 +53,29 @@ describe("HttpRequest protocol detection", () => {
     await new Promise((resolve) => client.on("close", resolve));
     await new Promise((resolve) => server.close(resolve));
   });
+
+  it("rejects when headers are not complete before the deadline", async () => {
+    const server = net.createServer(async (socket) => {
+      try {
+        await HttpRequest.nextOnSocket(socket, { headerTimeout: 30 });
+        assert.fail("expected HEADER_TIMEOUT");
+      } catch (err) {
+        assert.equal(err.code, "HEADER_TIMEOUT");
+      }
+      socket.end();
+    });
+
+    await new Promise((resolve, reject) => {
+      server.listen(0, resolve);
+      server.on("error", reject);
+    });
+
+    const client = net.connect(server.address().port);
+    await new Promise((resolve) => client.on("connect", resolve));
+    client.write("GET / HTTP/1.1\r\nHost: test.local\r\nX-Slow: ");
+    await new Promise((resolve) => client.on("close", resolve));
+    await new Promise((resolve) => server.close(resolve));
+  });
 });
 
 function readBody(stream) {

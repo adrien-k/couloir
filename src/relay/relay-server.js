@@ -22,6 +22,7 @@ export class RelayServer {
     controlApi,
     hostSocketTimeout,
     joinTimeout = 60_000,
+    headerTimeout = 10_000,
     maxCouloirs = 100,
     maxConnections = 500,
     openRateMax = 30,
@@ -41,6 +42,7 @@ export class RelayServer {
     this.controlApi = controlApi;
     this.hostSocketTimeout = hostSocketTimeout;
     this.joinTimeout = joinTimeout;
+    this.headerTimeout = headerTimeout;
     this.maxCouloirs = maxCouloirs;
     this.maxConnections = maxConnections;
     this.openRateMax = openRateMax;

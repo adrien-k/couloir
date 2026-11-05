@@ -3,6 +3,8 @@ import UserError from "./user-error.js";
 
 /** Cap header buffering so a slowloris client cannot grow headBuffer without bound. */
 export const MAX_HTTP_HEADER_BYTES = 16 * 1024;
+/** Absolute deadline to finish reading request/response headers, even if the peer keeps sending. */
+export const MAX_HTTP_HEADER_MS = 10_000;
 export function parseHttp(head) {
   const headLines = head.replace(/\r\n$/, "").split("\r\n");
   return { startLine: headLines[0], headers: parseHeaders(headLines.slice(1)) };
@@ -310,27 +312,50 @@ class HttpMessage {
     if (socket.destroyed) {
       throw "EARLY_SOCKET_CLOSED";
     }
+    const headerTimeout = this.headerTimeout ?? MAX_HTTP_HEADER_MS;
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
+
       const onEnd = () => {
-        reject("EARLY_SOCKET_CLOSED");
+        finish(reject, "EARLY_SOCKET_CLOSED");
       };
 
       const onData = (chunk) => {
         this.onData(chunk);
         socket.off("end", onEnd);
         if (this.error) {
-          reject(this.error);
+          finish(reject, this.error);
           return;
         }
         if (this.headDone) {
-          resolve();
+          finish(resolve);
         }
       };
+
+      const timer =
+        headerTimeout > 0
+          ? setTimeout(() => {
+              const err = new UserError("Timed out waiting for HTTP headers.");
+              err.code = "HEADER_TIMEOUT";
+              this.error = err;
+              finish(reject, err);
+            }, headerTimeout)
+          : null;
+      timer?.unref?.();
 
       socket.on("data", onData);
       socket.on("end", onEnd);
 
       this.onEnd.push(() => {
+        clearTimeout(timer);
         socket.off("data", onData);
         socket.off("end", onEnd);
       });
@@ -373,9 +398,12 @@ class HttpMessage {
     this.unread = null;
   }
 
-  static async nextOnSocket(socket) {
+  static async nextOnSocket(socket, { headerTimeout } = {}) {
     const message = new this();
     message.socket = socket;
+    if (headerTimeout != null) {
+      message.headerTimeout = headerTimeout;
+    }
     await message.waitForHead(socket);
     return message;
   }

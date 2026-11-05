@@ -26,6 +26,7 @@ export default function relay({
   hostSocketTimeout = 60000,
   // Drop a couloir that is opened but never joined so labels cannot be reserved forever.
   joinTimeout = 60000,
+  headerTimeout = 10000,
   maxCouloirs = 100,
   maxConnections = 500,
   openRateMax = 30,
@@ -68,6 +69,7 @@ export default function relay({
     controlApi,
     hostSocketTimeout,
     joinTimeout,
+    headerTimeout,
     maxCouloirs,
     maxConnections,
     openRateMax,

@@ -412,7 +412,9 @@ export default class RelaySocket extends CouloirClientSocket {
     try {
       while (!this.socket.destroyed) {
         prevReq?.end();
-        const req = await HttpRequest.nextOnSocket(this.socket);
+        const req = await HttpRequest.nextOnSocket(this.socket, {
+          headerTimeout: this.relay.headerTimeout,
+        });
         prevRes?.end();
         this._controlSocket?.end();
         this._controlSocket = null;
@@ -440,6 +442,12 @@ export default class RelaySocket extends CouloirClientSocket {
 
       if (e.code === "HEADER_TOO_LARGE") {
         this.socket.write(`HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n`);
+        this.socket.end();
+        return;
+      }
+
+      if (e.code === "HEADER_TIMEOUT") {
+        this.socket.write(`HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
         this.socket.end();
         return;
       }

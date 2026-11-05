@@ -707,6 +707,16 @@ describe("HTTP control protocol", () => {
     });
   });
 
+  it("rejects a client that never finishes sending headers", async () => {
+    relayConfig.headerTimeout = 40;
+    await withRelay(async () => {
+      const socket = await createRelayConnection();
+      socket.write("GET / HTTP/1.1\r\nHost: test.local\r\nX-Slow: ");
+      const response = await socketDataPromise(socket);
+      assert.match(response.toString(), /^HTTP\/1.1 408 /);
+    });
+  });
+
   it("rejects headers that exceed the size cap", async () => {
     await withRelay(async () => {
       const response = await sendRelayRequest({
