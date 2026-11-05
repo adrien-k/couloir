@@ -31,16 +31,25 @@ function parseHeaders(headerLines) {
 }
 
 export function getHeader(headers, name) {
+  return getHeaderValues(headers, name);
+}
+
+/** Collect header values across any casing of `name`. */
+export function getHeaderValues(headers, name) {
   if (!headers) {
     return;
   }
   const lower = name.toLowerCase();
+  let values;
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === lower) {
-      return headers[key];
+      values = (values || []).concat(headers[key]);
     }
   }
+  return values;
 }
+
+const NO_BODY_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 
 export function parseReqHead(head) {
   const { startLine, headers } = parseHttp(head);
@@ -128,6 +137,9 @@ class HttpMessage {
         this.parseHead(head);
         this.headDone = true;
         this.initBodyFraming();
+        if (this.error) {
+          return;
+        }
         return this.feedBody(bodyChunk);
       }
       if (this.headBuffer.length > MAX_HTTP_HEADER_BYTES) {
@@ -150,6 +162,36 @@ class HttpMessage {
     }
   }
 
+  framingError(message, code) {
+    this.error = new UserError(message);
+    this.error.code = code;
+    return;
+  }
+
+  parseContentLength(values) {
+    if (values === undefined) {
+      return null;
+    }
+    const canonical = [];
+    for (const value of values) {
+      if (typeof value !== "string" || !/^[0-9]+$/.test(value)) {
+        this.framingError("Invalid Content-Length.", "BAD_FRAMING");
+        return null;
+      }
+      canonical.push(value);
+    }
+    if (new Set(canonical).size > 1) {
+      this.framingError("Conflicting Content-Length headers.", "BAD_FRAMING");
+      return null;
+    }
+    const n = Number(canonical[0]);
+    if (!Number.isSafeInteger(n)) {
+      this.framingError("Invalid Content-Length.", "BAD_FRAMING");
+      return null;
+    }
+    return n;
+  }
+
   initBodyFraming() {
     if (this.isWebSocket()) {
       return;
@@ -160,20 +202,45 @@ class HttpMessage {
       return;
     }
 
-    const transferEncoding = getHeader(this.headers, "Transfer-Encoding")?.[0]?.toLowerCase();
-    if (transferEncoding?.includes("chunked")) {
+    const transferEncoding = getHeaderValues(this.headers, "Transfer-Encoding");
+    const contentLength = getHeaderValues(this.headers, "Content-Length");
+    const hasChunked = transferEncoding?.some((value) => String(value).toLowerCase().includes("chunked"));
+
+    if (this.method) {
+      if (transferEncoding?.length) {
+        this.framingError("Transfer-Encoding is not supported.", "BAD_FRAMING");
+        return;
+      }
+      const length = this.parseContentLength(contentLength);
+      if (this.error) {
+        return;
+      }
+      if (length != null) {
+        this.bodyExpected = length;
+        return;
+      }
+      if (NO_BODY_METHODS.has(this.method)) {
+        this.bodyExpected = 0;
+        return;
+      }
+      this.framingError("Content-Length required.", "LENGTH_REQUIRED");
       return;
     }
 
-    const cl = getHeader(this.headers, "Content-Length");
-    if (cl !== undefined) {
-      const n = Number.parseInt(cl[0], 10);
-      this.bodyExpected = Number.isFinite(n) && n >= 0 ? n : 0;
+    if (hasChunked && contentLength) {
+      this.framingError("Conflicting Transfer-Encoding and Content-Length.", "BAD_FRAMING");
+      return;
+    }
+    if (hasChunked) {
       return;
     }
 
-    if (this.method === "GET" || this.method === "HEAD") {
-      this.bodyExpected = 0;
+    const length = this.parseContentLength(contentLength);
+    if (this.error) {
+      return;
+    }
+    if (length != null) {
+      this.bodyExpected = length;
       return;
     }
 
@@ -251,11 +318,12 @@ class HttpMessage {
       const onData = (chunk) => {
         this.onData(chunk);
         socket.off("end", onEnd);
-        if (this.headDone) {
-          resolve();
-        }
         if (this.error) {
           reject(this.error);
+          return;
+        }
+        if (this.headDone) {
+          resolve();
         }
       };
 

@@ -444,6 +444,18 @@ export default class RelaySocket extends CouloirClientSocket {
         return;
       }
 
+      if (e.code === "BAD_FRAMING") {
+        this.socket.write(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+        this.socket.end();
+        return;
+      }
+
+      if (e.code === "LENGTH_REQUIRED") {
+        this.socket.write(`HTTP/1.1 411 Length Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+        this.socket.end();
+        return;
+      }
+
       if (e === "EARLY_SOCKET_CLOSED") {
         // This is fine too, did not receive any request and socket got closed.
         return;

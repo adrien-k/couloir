@@ -131,6 +131,69 @@ describe("HttpRequest body framing", () => {
 
     assert.deepEqual(received, ["/one", "/two"]);
   });
+
+  async function parseRequest(raw) {
+    let error;
+    let parsed;
+    const server = net.createServer(async (socket) => {
+      try {
+        parsed = await HttpRequest.nextOnSocket(socket);
+        parsed.end();
+      } catch (err) {
+        error = err;
+      } finally {
+        socket.end();
+      }
+    });
+    await new Promise((resolve, reject) => {
+      server.listen(0, resolve);
+      server.on("error", reject);
+    });
+    const client = net.connect(server.address().port);
+    await new Promise((resolve) => client.on("connect", resolve));
+    client.write(raw);
+    await new Promise((resolve) => client.on("close", resolve));
+    await new Promise((resolve) => server.close(resolve));
+    if (error) {
+      throw error;
+    }
+    return parsed;
+  }
+
+  it("rejects chunked Transfer-Encoding on requests", async () => {
+    await assert.rejects(
+      () =>
+        parseRequest(
+          "POST /upload HTTP/1.1\r\nHost: test.local\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nGET /smuggled HTTP/1.1\r\nHost: test.local\r\n\r\n",
+        ),
+      (err) => err.code === "BAD_FRAMING",
+    );
+  });
+
+  it("rejects POST without Content-Length", async () => {
+    await assert.rejects(
+      () => parseRequest("POST /upload HTTP/1.1\r\nHost: test.local\r\n\r\nhello"),
+      (err) => err.code === "LENGTH_REQUIRED",
+    );
+  });
+
+  it("rejects malformed and conflicting Content-Length values", async () => {
+    await assert.rejects(
+      () => parseRequest("POST /upload HTTP/1.1\r\nHost: test.local\r\nContent-Length: 5, 5\r\n\r\nhello"),
+      (err) => err.code === "BAD_FRAMING",
+    );
+    await assert.rejects(
+      () => parseRequest("POST /upload HTTP/1.1\r\nHost: test.local\r\nContent-Length: +5\r\n\r\nhello"),
+      (err) => err.code === "BAD_FRAMING",
+    );
+    await assert.rejects(
+      () =>
+        parseRequest(
+          "POST /upload HTTP/1.1\r\nHost: test.local\r\nContent-Length: 0\r\ncontent-length: 5\r\n\r\nhello",
+        ),
+      (err) => err.code === "BAD_FRAMING",
+    );
+  });
 });
 
 describe("htmlResponse", () => {

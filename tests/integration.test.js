@@ -716,6 +716,24 @@ describe("HTTP control protocol", () => {
     });
   });
 
+  it("rejects chunked request framing", async () => {
+    await withRelay(async () => {
+      const response = await sendRelayRequest({
+        httpRequest: "POST /_couloir/open HTTP/1.1\r\nHost: test.local\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+      });
+      assert.match(response.toString(), /^HTTP\/1.1 400 /);
+    });
+  });
+
+  it("rejects POST without Content-Length", async () => {
+    await withRelay(async () => {
+      const response = await sendRelayRequest({
+        httpRequest: "POST /_couloir/open HTTP/1.1\r\nHost: test.local\r\n\r\n{}",
+      });
+      assert.match(response.toString(), /^HTTP\/1.1 411 /);
+    });
+  });
+
   it("rejects opens beyond maxCouloirs", async () => {
     relayConfig.maxCouloirs = 1;
     await withRelay(async () => {
