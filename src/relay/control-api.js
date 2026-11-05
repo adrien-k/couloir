@@ -50,12 +50,17 @@ export default class ControlApi {
     const response = await fetch(`http://${this.controlHost}:${this.controlPort}${path}`, {
       method,
       body: params ? JSON.stringify(params) : undefined,
+      redirect: "manual",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
         "X-API-KEY": this.controlApiKey,
       },
     });
+
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error("Control API returned an unexpected redirect");
+    }
 
     return response;
   }

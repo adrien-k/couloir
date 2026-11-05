@@ -5,9 +5,29 @@ import UserError from "../user-error.js";
 import RelaySocket from "./relay-socket.js";
 import RelayCouloir, { TYPE_HOST } from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
+import { secretsEqual } from "../secrets-equal.js";
+import { prefetchCert } from "../certs.js";
 
 export class RelayServer {
-  constructor({ http, relayPort, log, verbose, domain, certService, password, controlApi, hostSocketTimeout } = {}) {
+  #openAttempts;
+
+  constructor({
+    http,
+    relayPort,
+    log,
+    verbose,
+    domain,
+    certService,
+    password,
+    controlApi,
+    hostSocketTimeout,
+    joinTimeout = 60_000,
+    headerTimeout = 10_000,
+    maxCouloirs = 100,
+    maxConnections = 500,
+    openRateMax = 30,
+    openRateWindowMs = 60_000,
+  } = {}) {
     this.http = http;
     this.relayPort = relayPort;
     this.log = log;
@@ -18,9 +38,16 @@ export class RelayServer {
     this.hostPrefix = this.domain.indexOf("couloir") > -1 ? "porte" : "couloir";
     this.couloirs = {};
     this.sockets = {};
-    this.keyToHost = {};
+    this.keyToCouloir = {};
     this.controlApi = controlApi;
     this.hostSocketTimeout = hostSocketTimeout;
+    this.joinTimeout = joinTimeout;
+    this.headerTimeout = headerTimeout;
+    this.maxCouloirs = maxCouloirs;
+    this.maxConnections = maxConnections;
+    this.openRateMax = openRateMax;
+    this.openRateWindowMs = openRateWindowMs;
+    this.#openAttempts = new Map();
   }
 
   url() {
@@ -73,11 +100,10 @@ export class RelayServer {
       return;
     }
     couloir.closed = true;
+    couloir.clearJoinTimeout();
     delete this.couloirs[couloir.host];
-    for (const key of Object.keys(this.keyToHost)) {
-      if (this.keyToHost[key] === couloir.host) {
-        delete this.keyToHost[key];
-      }
+    if (this.keyToCouloir[couloir.key] === couloir) {
+      delete this.keyToCouloir[couloir.key];
     }
 
     this.log.info(`Closing couloir "${couloir.host}"`);
@@ -87,10 +113,19 @@ export class RelayServer {
 
   async openCouloir(socket, { couloirLabel, password, version: clientVersion, cliToken }) {
     // HTTP control protocol is a breaking change; require matching patch versions.
+    this.#rateLimitOpen(socket.ip);
+
     if (!clientVersion || !equalVersions(clientVersion, version, "patch")) {
       throw new UserError(
         `Client version (${clientVersion || "unknown"}) is not compatible with server version (${version}).`,
       );
+    }
+
+    if (Object.keys(this.couloirs).length >= this.maxCouloirs) {
+      throw new UserError("Relay is at capacity. Try again later.", {
+        status: 503,
+        statusMessage: "Service Unavailable",
+      });
     }
     if (!this.controlApi.enabled() && !couloirLabel) {
       couloirLabel = this.hostPrefix;
@@ -101,7 +136,7 @@ export class RelayServer {
       }
     }
 
-    if (this.password && password !== this.password) {
+    if (this.password && !secretsEqual(password, this.password)) {
       throw new UserError(
         password ? "Invalid Relay password." : "This Relay require a password. Use the --password <password> option.",
       );
@@ -109,22 +144,49 @@ export class RelayServer {
 
     const couloir = await RelayCouloir.init(this, { couloirLabel, cliToken });
 
-    this.couloirs[couloir.host] = couloir;
-    this.keyToHost[couloir.key] = couloir.host;
+    if (this.couloirs[couloir.host] !== couloir) {
+      throw new UserError(`Couloir host ${couloir.host} is already opened`, {
+        status: 409,
+        statusMessage: "Conflict",
+      });
+    }
+    this.keyToCouloir[couloir.key] = couloir;
+    couloir.armJoinTimeout();
     socket.log.info(`Couloir opened "${couloir.host}"`);
 
     if (this.certService) {
       // Already start the let's encrypt cert generation.
-      // We don't await it on purpose
-      this.certService.getCertOnDemand(couloir.host);
+      // We don't await it on purpose; failures are logged, not thrown.
+      prefetchCert(this.certService, couloir.host, this.log);
     }
 
     return couloir;
   }
 
+  #rateLimitOpen(ip) {
+    const now = Date.now();
+    const key = ip || "unknown";
+    if (this.#openAttempts.size > 10_000) {
+      this.#openAttempts.clear();
+    }
+    const times = (this.#openAttempts.get(key) || []).filter((t) => now - t < this.openRateWindowMs);
+    if (times.length >= this.openRateMax) {
+      this.#openAttempts.set(key, times);
+      throw new UserError("Too many open attempts. Please try again later.", {
+        status: 429,
+        statusMessage: "Too Many Requests",
+      });
+    }
+    times.push(now);
+    this.#openAttempts.set(key, times);
+  }
+
   getCouloir(key) {
-    const host = this.keyToHost[key];
-    return host && this.couloirs[host];
+    const couloir = this.keyToCouloir[key];
+    if (!couloir || couloir.closed || !secretsEqual(couloir.key, key)) {
+      return;
+    }
+    return couloir;
   }
 
   onRemoveSocket(relaySocket) {
@@ -136,6 +198,12 @@ export class RelayServer {
 
   #onConnection(socket) {
     if (this.stopped) {
+      socket.end();
+      return;
+    }
+
+    if (Object.keys(this.sockets).length >= this.maxConnections) {
+      socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
       socket.end();
       return;
     }

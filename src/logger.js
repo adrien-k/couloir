@@ -14,7 +14,8 @@ export function loggerFactory({ baseLogger = console, withTimestamp = true, verb
         msg = errorMessage(msg, { verbose });
       }
       for (const hidePattern of hide) {
-        const regex = new RegExp(hidePattern, "g");
+        const escaped = String(hidePattern).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(escaped, "g");
         msg = msg.replace(regex, "<HIDDEN>");
       }
 

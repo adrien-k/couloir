@@ -1,5 +1,10 @@
 import { PassThrough } from "node:stream";
 import UserError from "./user-error.js";
+
+/** Cap header buffering so a slowloris client cannot grow headBuffer without bound. */
+export const MAX_HTTP_HEADER_BYTES = 16 * 1024;
+/** Absolute deadline to finish reading request/response headers, even if the peer keeps sending. */
+export const MAX_HTTP_HEADER_MS = 10_000;
 export function parseHttp(head) {
   const headLines = head.replace(/\r\n$/, "").split("\r\n");
   return { startLine: headLines[0], headers: parseHeaders(headLines.slice(1)) };
@@ -28,16 +33,25 @@ function parseHeaders(headerLines) {
 }
 
 export function getHeader(headers, name) {
+  return getHeaderValues(headers, name);
+}
+
+/** Collect header values across any casing of `name`. */
+export function getHeaderValues(headers, name) {
   if (!headers) {
     return;
   }
   const lower = name.toLowerCase();
+  let values;
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === lower) {
-      return headers[key];
+      values = (values || []).concat(headers[key]);
     }
   }
+  return values;
 }
+
+const NO_BODY_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 
 export function parseReqHead(head) {
   const { startLine, headers } = parseHttp(head);
@@ -88,9 +102,9 @@ body {
       htmlText +
       "</div></body></html>";
 
-    return `HTTP/1.1 ${status}\r\nContent-Type: text/html\r\nContent-Length: ${html.length}\r\n\r\n${html}`;
+    return `HTTP/1.1 ${status}\r\nContent-Type: text/html\r\nContent-Length: ${Buffer.byteLength(html)}\r\n\r\n${html}`;
   } else {
-    return `HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nContent-Length: ${text.length}\r\n\r\n${text}`;
+    return `HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(text)}\r\n\r\n${text}`;
   }
 }
 
@@ -99,6 +113,11 @@ class HttpMessage {
     this.headDone = false;
     this.body = new PassThrough();
     this.bodyLength = 0;
+    this.bodyReceived = 0;
+    // null = unbounded (close-delimited, chunked, or WebSocket)
+    this.bodyExpected = null;
+    this.bodyComplete = false;
+    this.unread = null;
     this.onEnd = [];
   }
 
@@ -109,15 +128,29 @@ class HttpMessage {
       this.headBuffer = Buffer.concat([this.headBuffer || Buffer.from([]), chunk]);
       const bodySeparator = this.headBuffer.indexOf("\r\n\r\n");
       if (bodySeparator > -1) {
+        if (bodySeparator > MAX_HTTP_HEADER_BYTES) {
+          this.error = new UserError("HTTP headers too large.");
+          this.error.code = "HEADER_TOO_LARGE";
+          return;
+        }
         const bodyChunk = this.headBuffer.subarray(bodySeparator + 4);
         const head = this.headBuffer.subarray(0, bodySeparator).toString("utf8");
         delete this.headBuffer;
         this.parseHead(head);
         this.headDone = true;
-        return this.body.write(bodyChunk);
+        this.initBodyFraming();
+        if (this.error) {
+          return;
+        }
+        return this.feedBody(bodyChunk);
+      }
+      if (this.headBuffer.length > MAX_HTTP_HEADER_BYTES) {
+        this.error = new UserError("HTTP headers too large.");
+        this.error.code = "HEADER_TOO_LARGE";
+        return;
       }
     } else {
-      return this.body.write(chunk);
+      return this.feedBody(chunk);
     }
 
     // We received a chunk that did not qualify as http head. Probably a protocol error.
@@ -131,28 +164,200 @@ class HttpMessage {
     }
   }
 
+  framingError(message, code) {
+    this.error = new UserError(message);
+    this.error.code = code;
+    return;
+  }
+
+  parseContentLength(values) {
+    if (values === undefined) {
+      return null;
+    }
+    const canonical = [];
+    for (const value of values) {
+      if (typeof value !== "string" || !/^[0-9]+$/.test(value)) {
+        this.framingError("Invalid Content-Length.", "BAD_FRAMING");
+        return null;
+      }
+      canonical.push(value);
+    }
+    if (new Set(canonical).size > 1) {
+      this.framingError("Conflicting Content-Length headers.", "BAD_FRAMING");
+      return null;
+    }
+    const n = Number(canonical[0]);
+    if (!Number.isSafeInteger(n)) {
+      this.framingError("Invalid Content-Length.", "BAD_FRAMING");
+      return null;
+    }
+    return n;
+  }
+
+  initBodyFraming() {
+    if (this.isWebSocket()) {
+      return;
+    }
+
+    const statusNum = this.status != null ? Number.parseInt(this.status, 10) : NaN;
+    if (statusNum === 101) {
+      return;
+    }
+
+    const transferEncoding = getHeaderValues(this.headers, "Transfer-Encoding");
+    const contentLength = getHeaderValues(this.headers, "Content-Length");
+    const hasChunked = transferEncoding?.some((value) => String(value).toLowerCase().includes("chunked"));
+
+    if (this.method) {
+      if (transferEncoding?.length) {
+        this.framingError("Transfer-Encoding is not supported.", "BAD_FRAMING");
+        return;
+      }
+      const length = this.parseContentLength(contentLength);
+      if (this.error) {
+        return;
+      }
+      if (length != null) {
+        this.bodyExpected = length;
+        return;
+      }
+      if (NO_BODY_METHODS.has(this.method)) {
+        this.bodyExpected = 0;
+        return;
+      }
+      this.framingError("Content-Length required.", "LENGTH_REQUIRED");
+      return;
+    }
+
+    if (hasChunked && contentLength) {
+      this.framingError("Conflicting Transfer-Encoding and Content-Length.", "BAD_FRAMING");
+      return;
+    }
+    if (hasChunked) {
+      return;
+    }
+
+    const length = this.parseContentLength(contentLength);
+    if (this.error) {
+      return;
+    }
+    if (length != null) {
+      this.bodyExpected = length;
+      return;
+    }
+
+    if (
+      Number.isFinite(statusNum) &&
+      (statusNum === 204 || statusNum === 304 || (statusNum >= 100 && statusNum < 200))
+    ) {
+      this.bodyExpected = 0;
+    }
+  }
+
+  feedBody(chunk) {
+    if (this.bodyExpected == null) {
+      if (chunk?.length) {
+        return this.body.write(chunk);
+      }
+      return;
+    }
+
+    if (this.bodyComplete) {
+      this.appendUnread(chunk);
+      return;
+    }
+
+    const remaining = this.bodyExpected - this.bodyReceived;
+    if (remaining <= 0) {
+      this.finishBody();
+      this.appendUnread(chunk);
+      return;
+    }
+
+    if (!chunk?.length) {
+      return;
+    }
+
+    if (chunk.length <= remaining) {
+      const canContinue = this.body.write(chunk);
+      this.bodyReceived += chunk.length;
+      if (this.bodyReceived >= this.bodyExpected) {
+        this.finishBody();
+      }
+      return canContinue;
+    }
+
+    this.body.write(chunk.subarray(0, remaining));
+    this.bodyReceived = this.bodyExpected;
+    this.finishBody();
+    this.appendUnread(chunk.subarray(remaining));
+  }
+
+  finishBody() {
+    if (this.bodyComplete) {
+      return;
+    }
+    this.bodyComplete = true;
+    this.body.end();
+  }
+
+  appendUnread(chunk) {
+    if (!chunk?.length) {
+      return;
+    }
+    this.unread = this.unread ? Buffer.concat([this.unread, chunk]) : Buffer.from(chunk);
+  }
+
   async waitForHead(socket) {
+    if (socket.destroyed) {
+      throw "EARLY_SOCKET_CLOSED";
+    }
+    const headerTimeout = this.headerTimeout ?? MAX_HTTP_HEADER_MS;
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
+
       const onEnd = () => {
-        reject("EARLY_SOCKET_CLOSED");
+        finish(reject, "EARLY_SOCKET_CLOSED");
       };
 
       const onData = (chunk) => {
         this.onData(chunk);
         socket.off("end", onEnd);
-        if (this.headDone) {
-          resolve();
-        }
         if (this.error) {
-          reject(this.error);
+          finish(reject, this.error);
+          return;
+        }
+        if (this.headDone) {
+          finish(resolve);
         }
       };
+
+      const timer =
+        headerTimeout > 0
+          ? setTimeout(() => {
+              const err = new UserError("Timed out waiting for HTTP headers.");
+              err.code = "HEADER_TIMEOUT";
+              this.error = err;
+              finish(reject, err);
+            }, headerTimeout)
+          : null;
+      timer?.unref?.();
 
       socket.on("data", onData);
       socket.on("end", onEnd);
 
       this.onEnd.push(() => {
+        clearTimeout(timer);
         socket.off("data", onData);
+        socket.off("end", onEnd);
       });
     });
   }
@@ -182,14 +387,23 @@ class HttpMessage {
 
   /**
    * Call this when the http message is completed and the body is fully streamed.
+   * Bytes past Content-Length (or a GET/HEAD with no body) are unshifted so the
+   * next keep-alive message on this socket can be parsed.
    */
   end() {
     this.onEnd.forEach((fn) => fn());
+    if (this.unread?.length && this.socket && !this.socket.destroyed) {
+      this.socket.unshift(this.unread);
+    }
+    this.unread = null;
   }
 
-  static async nextOnSocket(socket) {
+  static async nextOnSocket(socket, { headerTimeout } = {}) {
     const message = new this();
     message.socket = socket;
+    if (headerTimeout != null) {
+      message.headerTimeout = headerTimeout;
+    }
     await message.waitForHead(socket);
     return message;
   }

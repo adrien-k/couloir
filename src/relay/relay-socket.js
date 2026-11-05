@@ -32,7 +32,12 @@ export default class RelaySocket extends CouloirClientSocket {
     this.hijacked = false;
 
     this.log = this.relay.log.tags([this.ip, `#${this.id}`]);
-    this.#listen();
+    this.#listen().catch((err) => {
+      this.log.error(err);
+      if (!this.socket.destroyed) {
+        this.socket.destroy();
+      }
+    });
   }
 
   setType(type, host) {
@@ -123,11 +128,17 @@ export default class RelaySocket extends CouloirClientSocket {
   }
 
   async end({ force = false } = {}) {
-    if (!this.bound || force) {
-      await new Promise((r) => {
-        this.socket.end(r);
-      });
+    if (this.bound && !force) {
+      return;
     }
+    if (this.socket.destroyed) {
+      return;
+    }
+    await new Promise((resolve) => {
+      const done = () => resolve();
+      this.socket.once("close", done);
+      this.socket.end(done);
+    });
   }
 
   #quotaExceeded(hostSocket) {
@@ -153,6 +164,8 @@ export default class RelaySocket extends CouloirClientSocket {
   }
 
   async #pipeToControl(req) {
+    // Apex traffic is forwarded as-is to CONTROL_HOST. The relay API key is not
+    // added here — every control-plane route must authenticate on its own.
     const controlSocket = this.relay.controlApi.createSocket();
 
     try {
@@ -259,7 +272,7 @@ export default class RelaySocket extends CouloirClientSocket {
         this.#writeJson(200, "OK", { key: couloir.key, host: couloir.host });
       } catch (e) {
         if (e.isUserError) {
-          this.#writeJson(400, "Bad Request", { error: e.message });
+          this.#writeJson(e.status || 400, e.statusMessage || "Bad Request", { error: e.message });
         } else {
           this.log.error(e);
           this.#writeJson(500, "Internal Server Error", {
@@ -399,7 +412,9 @@ export default class RelaySocket extends CouloirClientSocket {
     try {
       while (!this.socket.destroyed) {
         prevReq?.end();
-        const req = await HttpRequest.nextOnSocket(this.socket);
+        const req = await HttpRequest.nextOnSocket(this.socket, {
+          headerTimeout: this.relay.headerTimeout,
+        });
         prevRes?.end();
         this._controlSocket?.end();
         this._controlSocket = null;
@@ -421,6 +436,30 @@ export default class RelaySocket extends CouloirClientSocket {
     } catch (e) {
       if (e.code === "INVALID_PROTOCOL") {
         this.socket.write(`HTTP/1.1 400 Bad Request\r\n\r\n${e.message}.`);
+        this.socket.end();
+        return;
+      }
+
+      if (e.code === "HEADER_TOO_LARGE") {
+        this.socket.write(`HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n`);
+        this.socket.end();
+        return;
+      }
+
+      if (e.code === "HEADER_TIMEOUT") {
+        this.socket.write(`HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+        this.socket.end();
+        return;
+      }
+
+      if (e.code === "BAD_FRAMING") {
+        this.socket.write(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+        this.socket.end();
+        return;
+      }
+
+      if (e.code === "LENGTH_REQUIRED") {
+        this.socket.write(`HTTP/1.1 411 Length Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
         this.socket.end();
         return;
       }
