@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { join, resolve } from "node:path";
 import os from "node:os";
 
-import { hostnameFromHostHeader, isAllowedRedirectHost, safeCertDirectory } from "./certs.js";
+import { hostnameFromHostHeader, isAllowedRedirectHost, prefetchCert, safeCertDirectory } from "./certs.js";
 
 describe("ACME redirect Host allowlist", () => {
   it("allows the apex and a single-label subdomain", () => {
@@ -39,5 +39,31 @@ describe("safeCertDirectory", () => {
 describe("hostnameFromHostHeader", () => {
   it("strips a port suffix", () => {
     assert.equal(hostnameFromHostHeader("example.com:80"), "example.com");
+  });
+});
+
+describe("prefetchCert", () => {
+  it("does not produce an unhandled rejection when ACME fails", async () => {
+    const unhandled = [];
+    const onUnhandled = (err) => unhandled.push(err);
+    process.on("unhandledRejection", onUnhandled);
+    const logged = [];
+    try {
+      prefetchCert(
+        {
+          getCertOnDemand: async () => {
+            throw new Error("contact email has invalid domain");
+          },
+        },
+        "app.test.local",
+        { error: (msg) => logged.push(msg) },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(unhandled.length, 0);
+      assert.match(logged[0], /Failed to get certificate for app.test.local/);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });

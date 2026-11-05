@@ -6,6 +6,7 @@ import RelaySocket from "./relay-socket.js";
 import RelayCouloir, { TYPE_HOST } from "./relay-couloir.js";
 import version, { equalVersions } from "../version.js";
 import { secretsEqual } from "../secrets-equal.js";
+import { prefetchCert } from "../certs.js";
 
 export class RelayServer {
   #openAttempts;
@@ -148,8 +149,8 @@ export class RelayServer {
 
     if (this.certService) {
       // Already start the let's encrypt cert generation.
-      // We don't await it on purpose
-      this.certService.getCertOnDemand(couloir.host);
+      // We don't await it on purpose; failures are logged, not thrown.
+      prefetchCert(this.certService, couloir.host, this.log);
     }
 
     return couloir;

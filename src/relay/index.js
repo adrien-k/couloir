@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { createCertServer, createWildcardCertServer } from "../certs.js";
+import { createCertServer, createWildcardCertServer, prefetchCert } from "../certs.js";
 import { loggerFactory } from "../logger.js";
 import { RelayServer } from "./relay-server.js";
 import { CONFIG_DIR } from "../config.js";
@@ -86,9 +86,9 @@ export default function relay({
 
       if (certService) {
         // Already prepare a few certs cert for the main domain and first couloir
-        // We don't wait for those requests to complete
-        certService.getCertOnDemand(domain);
-        certService.getCertOnDemand(`${relay.hostPrefix}.${domain}`);
+        // We don't wait for those requests to complete; failures are logged, not thrown.
+        prefetchCert(certService, domain, log);
+        prefetchCert(certService, `${relay.hostPrefix}.${domain}`, log);
 
         await certService.start();
       }

@@ -156,6 +156,16 @@ async function createClient(certsDirectory) {
   });
 }
 
+/** Fire-and-forget cert fetch; a failed ACME order must not become an unhandled rejection. */
+export function prefetchCert(certService, host, log) {
+  if (!certService) {
+    return;
+  }
+  Promise.resolve(certService.getCertOnDemand(host)).catch((err) => {
+    log?.error(`Failed to get certificate for ${host}: ${err?.message || err}`);
+  });
+}
+
 export function createWildcardCertServer({ certFile, keyFile, log } = {}) {
   log = log.tags(["Cert"]);
 
