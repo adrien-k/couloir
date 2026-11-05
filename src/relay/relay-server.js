@@ -144,7 +144,12 @@ export class RelayServer {
 
     const couloir = await RelayCouloir.init(this, { couloirLabel, cliToken });
 
-    this.couloirs[couloir.host] = couloir;
+    if (this.couloirs[couloir.host] !== couloir) {
+      throw new UserError(`Couloir host ${couloir.host} is already opened`, {
+        status: 409,
+        statusMessage: "Conflict",
+      });
+    }
     this.keyToCouloir[couloir.key] = couloir;
     couloir.armJoinTimeout();
     socket.log.info(`Couloir opened "${couloir.host}"`);

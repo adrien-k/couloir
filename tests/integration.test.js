@@ -635,7 +635,7 @@ describe("HTTP control protocol", () => {
       const first = await openCouloirHttp({ couloirLabel: "app" });
       assert.equal(first.status, 200);
       const second = await openCouloirHttp({ couloirLabel: "app" });
-      assert.equal(second.status, 400);
+      assert.equal(second.status, 409);
       assert.match(second.body.error, /already opened/);
 
       const wsKey = crypto.randomBytes(16).toString("base64");

@@ -48,10 +48,15 @@ export default class RelayCouloir {
     const host = `${couloirLabel}.${relay.domain}`;
 
     if (relay.couloirs[host]) {
-      throw new UserError(`Couloir host ${host} is already opened`);
+      throw new UserError(`Couloir host ${host} is already opened`, {
+        status: 409,
+        statusMessage: "Conflict",
+      });
     }
 
-    return new RelayCouloir(relay, { host, cliToken, remainingQuota, controlApiCouloirClient });
+    const couloir = new RelayCouloir(relay, { host, cliToken, remainingQuota, controlApiCouloirClient });
+    relay.couloirs[host] = couloir;
+    return couloir;
   }
 
   armJoinTimeout() {
