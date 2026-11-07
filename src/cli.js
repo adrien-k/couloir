@@ -8,6 +8,7 @@ import version from "./version.js";
 import { loggerFactory, errorMessage } from "./logger.js";
 import relay from "./relay/index.js";
 import expose from "./expose/index.js";
+import demo, { resolvePort } from "./demo/index.js";
 import logo from "./logo.js";
 import { settings, saveSetting, redactedSettings } from "./config.js";
 
@@ -206,6 +207,24 @@ yargs(hideBin(process.argv))
     async (argv) => {
       saveSetting(argv.config);
       argv.log.raw(`Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(redactedSettings(), null, 2)}`);
+    },
+  )
+  // Hidden command (description is `false`): not listed in --help.
+  .command(
+    "demo",
+    false,
+    (yargs) =>
+      yargs.option("port", {
+        describe: "Port of the demo server. Default: PORT env var or 3000.",
+        type: "integer",
+      }),
+    async (argv) => {
+      const port = resolvePort(argv.port, process.env.PORT);
+      argv.log.raw(logo(`Demo Server | Version ${version}`, { stdout: true, center: true }));
+      if (!argv.ignoreConfig) {
+        printConfig(argv);
+      }
+      await demo({ port, log: argv.log }).start();
     },
   )
   .option("verbose", {
