@@ -203,10 +203,9 @@ yargs(hideBin(process.argv))
       argv.log.raw(`Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(redactedSettings(), null, 2)}`);
     },
   )
-  // Hidden command (description is `false`): not listed in --help.
   .command(
     "demo",
-    false,
+    "Start a local test HTTP service to validate tunnels: GET/POST echo, WebSocket echo, SSE and chunked streaming (see the README 'Test your relay' recipe).",
     (yargs) =>
       yargs.option("port", {
         describe: "Port of the demo server. Default: PORT env var or 3000.",

@@ -132,8 +132,7 @@ couloir 3000
 
 `couloir demo` starts a local test service that exercises the HTTP features a tunnel must
 forward correctly: plain GET, regular and binary POST (byte-exact echo), bidirectional
-WebSockets, Server-Sent Events and chunked streaming responses. It is not listed in
-`couloir --help`.
+WebSockets, Server-Sent Events and chunked streaming responses.
 
 1. Start the demo server (port 3000 by default, or pass `--port` / set `PORT`):
 
