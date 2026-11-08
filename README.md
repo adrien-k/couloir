@@ -147,31 +147,8 @@ couloir demo
 couloir 3000 --on mydomain.com
 ```
 
-3. Open the exposed URL in a browser. The page runs every test against its own origin and
-   shows a green check or a red cross per row, with the reason on failures (press `r` or
-   reload to re-run):
-
-```
-+------------------------------------------------------------------------+
-|                    COULOIR DEMO · HTTP TEST CASES                      |
-+------------------------------------------------------------------------+
-|  [✓] Plain GET request .................... JSON ok (12 ms)             |
-|  [✓] Regular POST + echo (16 KiB text) .... 16 KiB echoed (21 ms)       |
-|  [✓] Binary POST + echo (256 B fixed) ..... 256 B echoed (44 ms)        |
-|  [✓] WebSocket echo (6 text + 2 binary) ... 8/8 frames in order         |
-|  [✗] SSE stream (8 events)                FAILED                       |
-|        → SSE: got 3 events, expected 8                                 |
-+------------------------------------------------------------------------+
-```
-
-Payloads are pre-canned so runs are reproducible; each row expands on the page with the
-messages it sent and received. Red crosses usually point at a reverse proxy or relay that
-does not forward WebSocket upgrades, buffers SSE/chunked responses, or truncates large
-bodies. Tips:
-
-- Re-run the tests after changing relay options (`--http`, `--port`) or adding a reverse proxy.
-- All six rows green means the path forwards what your app needs; connect your app after the
-  demo passes.
+3. Open the exposed URL in a browser and check the tests results on the page (green checks
+   or red crosses per test case).
 
 ### HTTP-only mode
 
