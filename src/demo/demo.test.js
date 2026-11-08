@@ -137,17 +137,37 @@ describe("demo server endpoints", () => {
   });
   after(() => stopServer(server));
 
-  it("serves the ASCII test page", async () => {
+  it("serves the ASCII test page shell", async () => {
     const res = await fetch(`http://127.0.0.1:${port}/`);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get("content-type"), "text/html; charset=utf-8");
     assert.equal(res.headers.get("cache-control"), "no-store");
     const html = await res.text();
-    assert.match(html, /COULOIR DEMO · HTTP TEST CASES/);
-    assert.match(html, /<span class='ok'>/);
-    assert.match(html, /\/api\/ws-echo/);
-    assert.ok(html.includes(String(TEXT_ECHO_BYTES)));
-    assert.ok(html.includes(String(BINARY_ECHO_BYTES)));
+    assert.match(html, /<script src="\/demo\.js"><\/script>/);
+    assert.match(html, /window\.DEMO_CONFIG = /);
+    assert.match(html, /"sseCount":8/);
+    assert.match(html, /"streamCount":16/);
+  });
+
+  it("serves the demo page script at /demo.js", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/demo.js`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "text/javascript; charset=utf-8");
+    assert.equal(res.headers.get("cache-control"), "no-store");
+    const script = await res.text();
+    assert.match(script, /DEMO_CONFIG/);
+    assert.match(script, /16 \* 1024/);
+    assert.match(script, /256 \* 1024/);
+    // The script must stay syntactically valid for browsers (compile-only, no execution).
+    new Function(script);
+  });
+
+  it("answers HEAD requests for the page and the script", async () => {
+    for (const path of ["/", "/demo.js"]) {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: "HEAD" });
+      assert.equal(res.status, 200);
+      assert.equal((await res.text()).length, 0);
+    }
   });
 
   it("serves a plain GET JSON payload", async () => {

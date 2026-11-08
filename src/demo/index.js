@@ -1,6 +1,10 @@
 import http from "node:http";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { loggerFactory } from "../logger.js";
+import version from "../version.js";
 import { demoPage } from "./demo-page.js";
 import { handleWsEchoSocket, websocketEchoUpgradeResponse } from "./demo-ws.js";
 import {
@@ -11,6 +15,10 @@ import {
   STREAM_CHUNK_COUNT,
   TEXT_ECHO_BYTES,
 } from "./demo-constants.js";
+
+// The browser script is served verbatim at /demo.js (see the routes below).
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pageScript = readFileSync(join(__dirname, "demo-script.js"), "utf8");
 
 /** Resolves the demo server port: explicit --port, then PORT env var, then 3000. */
 export function resolvePort(port, envPort = process.env.PORT) {
@@ -38,7 +46,7 @@ export function createDemoServer({
   tickDelay = DEMO_TICK_MS,
   log = loggerFactory(),
 } = {}) {
-  const page = demoPage({ sseCount: SSE_EVENT_COUNT, streamCount: STREAM_CHUNK_COUNT });
+  const page = demoPage({ version, sseCount: SSE_EVENT_COUNT, streamCount: STREAM_CHUNK_COUNT });
   const wsWithEchoPath = "/api/ws-echo";
 
   async function readRequestBody(req) {
@@ -75,6 +83,15 @@ export function createDemoServer({
       "Content-Length": Buffer.byteLength(page),
     });
     res.end(withBody ? page : undefined);
+  }
+
+  function sendPageScript(res, withBody = true) {
+    res.writeHead(200, {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Length": Buffer.byteLength(pageScript),
+    });
+    res.end(withBody ? pageScript : undefined);
   }
 
   function startSseStream(res) {
@@ -175,6 +192,10 @@ export function createDemoServer({
         case "GET /":
         case "HEAD /":
           sendPage(res, !req.method.startsWith("HEAD"));
+          return;
+        case "GET /demo.js":
+        case "HEAD /demo.js":
+          sendPageScript(res, !req.method.startsWith("HEAD"));
           return;
         case "GET /api/hello":
           sendJson(res, 200, {
