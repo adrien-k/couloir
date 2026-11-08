@@ -69,7 +69,7 @@ mydomain.com A 1.2.3.4
 *.mydomain.com A 1.2.3.4
 ```
 
-3. Run the Couloir relay. Self-hosted relays require a password (or `--open-relay` if you intentionally want a public relay):
+3. Run the Couloir relay. Self-hosted relays require a password:
 
 ```sh
 couloir relay mydomain.com --password foobar
@@ -99,7 +99,7 @@ couloir 3000 --on mydomain.com --as bonjour
 
 ### Protect the Relay with a password
 
-Self-hosted relays refuse to start unless you pass `--password` or explicitly `--open-relay`.
+Self-hosted relays refuse to start unless you pass `--password`.
 
 _Warning: using `--password` in combination with HTTP-only mode is not recommended as it results in the password
 being transmitted in clear, unless TLS is terminated in front of the relay (see [Behind an HTTP reverse proxy](#behind-an-http-reverse-proxy))._
@@ -110,12 +110,6 @@ couloir relay mydomain.com --password foobar
 
 # On your local machine
 couloir 3000 --on mydomain.com --password foobar
-```
-
-To keep the old open-relay behaviour (anyone who can reach the apex can open a couloir):
-
-```sh
-couloir relay mydomain.com --open-relay
 ```
 
 ### Persist your relay settings for shorter commands.

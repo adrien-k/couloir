@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import net from "node:net";
 import tls from "node:tls";
 
@@ -112,9 +113,6 @@ export class RelayServer {
   }
 
   async openCouloir(socket, { couloirLabel, password, version: clientVersion, cliToken }) {
-    // HTTP control protocol is a breaking change; require matching patch versions.
-    this.#rateLimitOpen(socket.ip);
-
     if (!clientVersion || !equalVersions(clientVersion, version, "patch")) {
       throw new UserError(
         `Client version (${clientVersion || "unknown"}) is not compatible with server version (${version}).`,
@@ -142,6 +140,11 @@ export class RelayServer {
       );
     }
 
+    // Rate limit per presenting credential instead of per client IP: one bucket per relay
+    // password, one per token. Invalid credentials are rejected above and never counted,
+    // so rotating fake credentials cannot mint new buckets.
+    this.#rateLimitOpen([password, cliToken].filter(Boolean).join("\n"));
+
     const couloir = await RelayCouloir.init(this, { couloirLabel, cliToken });
 
     if (this.couloirs[couloir.host] !== couloir) {
@@ -163,9 +166,10 @@ export class RelayServer {
     return couloir;
   }
 
-  #rateLimitOpen(ip) {
+  #rateLimitOpen(credential) {
     const now = Date.now();
-    const key = ip || "unknown";
+    // Hash the credential so raw secrets are not kept in the limiter's memory.
+    const key = credential ? createHash("sha256").update(credential).digest("hex").slice(0, 24) : "anonymous";
     if (this.#openAttempts.size > 10_000) {
       this.#openAttempts.clear();
     }

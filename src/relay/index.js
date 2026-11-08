@@ -17,7 +17,6 @@ export default function relay({
   wildcardCert,
   wildcardKey,
   password,
-  openRelay = false,
   controlHost = process.env.CONTROL_HOST,
   controlPort = process.env.CONTROL_PORT,
   controlApiKey = process.env.CONTROL_API_KEY,
@@ -78,9 +77,9 @@ export default function relay({
 
   return {
     start: async () => {
-      if (!controlApi.enabled() && !password && !openRelay) {
+      if (!controlApi.enabled() && !password) {
         throw new UserError(
-          "Refusing to start an open relay. Pass --password <secret> to require a password, or --open-relay to allow anyone to open couloirs.",
+          "Refusing to start an open relay. Pass --password <secret> to require a password, or set CONTROL_HOST to use a token-based control API.",
         );
       }
 

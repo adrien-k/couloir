@@ -93,7 +93,7 @@ beforeEach(() => {
     relayPort: RELAY_PORT,
     domain: "test.local",
     http: true,
-    openRelay: true,
+    password: "foo",
     log: logFactory("relay"),
     verbose: true,
   };
@@ -104,6 +104,7 @@ beforeEach(() => {
     relayPort: RELAY_PORT,
     maxConcurrency: 1,
     http: true,
+    password: "foo",
     log: logFactory("expose"),
     verbose: true,
   };
@@ -411,6 +412,7 @@ describe("can protect the relay with a password", () => {
   });
 
   it("reject when no password", async () => {
+    exposeConfig.password = undefined;
     try {
       await setup({}, async () => {});
       assert.fail("Should not be reached");
@@ -577,8 +579,8 @@ it("returns 502 when closing local server", async () => {
   });
 });
 
-it("refuses to start a self-hosted relay without --password or --open-relay", async () => {
-  relayConfig.openRelay = false;
+it("refuses to start a self-hosted relay without --password", async () => {
+  relayConfig.password = undefined;
   const relayServer = relay(relayConfig);
   await assert.rejects(() => relayServer.start(), /Refusing to start an open relay/);
 });
@@ -596,7 +598,7 @@ describe("HTTP control protocol", () => {
 
   async function openCouloirHttp({ couloirLabel = "couloir", extra = {} } = {}) {
     const socket = await createRelayConnection();
-    const body = JSON.stringify({ version, couloirLabel, ...extra });
+    const body = JSON.stringify({ version, couloirLabel, password: relayConfig.password, ...extra });
     socket.write(
       `POST /_couloir/open HTTP/1.1\r\nHost: test.local\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
     );
@@ -816,6 +818,9 @@ describe("with a control API", () => {
   const controlServer = new ControlApiMock();
 
   beforeEach(async () => {
+    // Token-based control API relays do not use a relay password.
+    delete relayConfig.password;
+    delete exposeConfig.password;
     relayConfig.controlHost = "localhost";
     relayConfig.controlPort = 30022;
     relayConfig.controlApiKey = "relay-key";
