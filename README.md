@@ -156,16 +156,24 @@ couloir 3000 --on mydomain.com
 |                    COULOIR DEMO · HTTP TEST CASES                      |
 +------------------------------------------------------------------------+
 |  [✓] Plain GET request .................... JSON ok (12 ms)             |
+|        out: GET /api/hello                                             |
+|        in: 200 · hello: "hello from the couloir demo server"           |
 |  [✓] Regular POST + echo (16 KiB text) .... 16 KiB echoed (21 ms)       |
-|  [✓] Binary POST + echo (256 KiB random) .. 256 KiB echoed (44 ms)      |
-|  [✓] WebSocket echo (6 text + 2 binary) ... 6/6 text + 2/2 in order     |
+|        out: POST /api/echo · 16 KiB · "couloir demo payload - thi…"    |
+|        in: 200 · echo match · "couloir demo payload - thi…"            |
+|  [✓] Binary POST + echo (256 B fixed) ..... 256 B echoed (44 ms)        |
+|  [✓] WebSocket echo (6 text + 2 binary) ... 8/8 frames in order         |
+|        out: 8 frames · 6 text + 2 binary · text: "Hello tunnel!" …    |
+|        in: 8/8 echoes match                                            |
 |  [✗] SSE stream (8 events)                FAILED                       |
+|        out: GET /api/sse                                              |
 |        → SSE: got 3 events, expected 8                                 |
 +------------------------------------------------------------------------+
 ```
 
-Red crosses usually point at a reverse proxy or relay that does not forward WebSocket
-upgrades, buffers SSE/chunked responses, or truncates large bodies. Tips:
+Each row details what the step sent (`out:`) and received (`in:`), with fixed payloads so
+runs are reproducible. Red crosses usually point at a reverse proxy or relay that does not
+forward WebSocket upgrades, buffers SSE/chunked responses, or truncates large bodies. Tips:
 
 - Re-run the tests after changing relay options (`--http`, `--port`) or adding a reverse proxy.
 - All six rows green means the path forwards what your app needs; connect your app after the

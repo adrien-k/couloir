@@ -1,17 +1,16 @@
 /**
  * Generates the HTML shell of the `couloir demo` results page.
  * The browser logic lives in `src/demo/demo-script.js`, served separately at `/demo.js`
- * by the demo server. Values known to the server (couloir version and the sizes of the
- * server-driven tests) are injected through `window.DEMO_CONFIG` so the script file can
- * stay static.
+ * by the demo server. Server-known values are injected through `window.DEMO_CONFIG` so
+ * the script file can stay static.
  */
 
-/** Escapes a value for safe interpolation inside a `<script>` tag (JSON + `<`). */
+/** Escapes a config object for safe interpolation inside a `<script>` tag (JSON + `<`). */
 function scriptConfig(config) {
   return JSON.stringify(config).replace(/</g, "\\u003c");
 }
 
-export function demoPage({ version, sseCount, streamCount }) {
+export function demoPage(config) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -31,7 +30,7 @@ pre { margin: 0; white-space: pre; overflow-x: auto; font: inherit; }
 <body>
 <pre id="box">loading demo page…</pre>
 <script>
-window.DEMO_CONFIG = ${scriptConfig({ version, sseCount, streamCount })};
+window.DEMO_CONFIG = ${scriptConfig(config)};
 </script>
 <script src="/demo.js"></script>
 </body>

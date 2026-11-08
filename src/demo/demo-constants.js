@@ -6,9 +6,8 @@ export const DEMO_PORT = 3000;
 /** Hard cap on echoed POST body size (the page sends much smaller payloads). */
 export const MAX_DEMO_BODY_BYTES = 8 * 1024 * 1024;
 
-/** Payload sizes used by the demo page POST tests. */
+/** Text payload size for the POST echo test (sent via DEMO_CONFIG to the page). */
 export const TEXT_ECHO_BYTES = 16 * 1024;
-export const BINARY_ECHO_BYTES = 256 * 1024;
 
 /** Number of events pushed by the SSE test endpoint (`GET /api/sse`). */
 export const SSE_EVENT_COUNT = 8;

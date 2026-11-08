@@ -40,12 +40,20 @@ function httpError(status, message) {
   return error;
 }
 
+// Pre-canned hyper-event labels, cycled if the event count exceeds the list length.
+const SSE_EVENT_MESSAGES = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"];
+
 export function createDemoServer({
   maxBodyBytes = MAX_DEMO_BODY_BYTES,
   tickDelay = DEMO_TICK_MS,
   log = loggerFactory(),
 } = {}) {
-  const page = demoPage({ version, sseCount: SSE_EVENT_COUNT, streamCount: STREAM_CHUNK_COUNT });
+  const page = demoPage({
+    version,
+    sseCount: SSE_EVENT_COUNT,
+    streamCount: STREAM_CHUNK_COUNT,
+    textEchoBytes: TEXT_ECHO_BYTES,
+  });
   const wsWithEchoPath = "/api/ws-echo";
 
   async function readRequestBody(req) {
@@ -126,15 +134,19 @@ export function createDemoServer({
         return;
       }
       if (i < SSE_EVENT_COUNT - 1) {
-        res.write(`event: tick\ndata: ${JSON.stringify({ i })}\n\n`);
+        res.write(
+          `event: tick\ndata: ${JSON.stringify({ i, msg: SSE_EVENT_MESSAGES[i % SSE_EVENT_MESSAGES.length] })}\n\n`,
+        );
         i++;
         timer = setTimeout(step, tickDelay);
       } else {
-        res.write(`event: tick\ndata: ${JSON.stringify({ i })}\n\n`);
+        res.write(
+          `event: tick\ndata: ${JSON.stringify({ i, msg: SSE_EVENT_MESSAGES[i % SSE_EVENT_MESSAGES.length] })}\n\n`,
+        );
         done();
       }
     };
-    res.write(`event: tick\ndata: ${JSON.stringify({ i: 0 })}\n\n`);
+    res.write(`event: tick\ndata: ${JSON.stringify({ i: 0, msg: SSE_EVENT_MESSAGES[0] })}\n\n`);
     i++;
     if (i >= SSE_EVENT_COUNT) {
       done();
@@ -213,10 +225,7 @@ export function createDemoServer({
             "Content-Length": bytes,
           });
           res.end(body);
-          log.info(
-            `[demo] POST /api/echo echoed ${bytes} bytes` +
-              (bytes > TEXT_ECHO_BYTES * 2 ? " (binary)" : ` (${contentType})`),
-          );
+          log.info(`[demo] POST /api/echo echoed ${bytes} bytes (${contentType})`);
           return;
         }
         case "GET /api/sse":

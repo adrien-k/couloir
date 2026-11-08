@@ -7,8 +7,9 @@
  * the page's own origin, so it exercises whatever path the browser used: localhost
  * directly, or a couloir tunnel when opened through one.
  *
- * Server-known values are injected by the HTML shell through `window.DEMO_CONFIG`:
- * `{ version: "0.8.0", sseCount: 8, streamCount: 16 }`.
+ * Payloads are all pre-canned and deterministic. Server-known values are injected by the
+ * HTML shell through `window.DEMO_CONFIG`:
+ * `{ version: "0.8.0", sseCount: 8, streamCount: 16, textEchoBytes: 16384 }`.
  */
 "use strict";
 
@@ -19,15 +20,44 @@
 
   var CONFIG = window.DEMO_CONFIG || {};
   var version = CONFIG.version || "unknown";
-  var POST_TEXT_BYTES = 16 * 1024; // must stay well under the server's MAX_DEMO_BODY_BYTES (8 MiB)
-  var POST_BINARY_BYTES = 256 * 1024;
-  var WS_TEXT_FRAMES = 6;
-  var WS_BINARY_FRAMES = 2;
+  var POST_TEXT_BYTES = CONFIG.textEchoBytes || 16 * 1024;
   var SSE_EVENTS = CONFIG.sseCount || 8;
   var STREAM_CHUNKS = CONFIG.streamCount || 16;
 
   var ORIGIN = location.origin;
   var WS_BASE = (location.protocol === "https:" ? "wss" : "ws") + "://" + location.host;
+
+  // --- Pre-canned payloads -----------------------------------------------------------
+
+  var CANNED_TEXT = "couloir demo payload - this exact text is echoed byte for byte through the tunnel.\n";
+
+  function buildCannedText(length) {
+    var text = "";
+    while (text.length < length) {
+      text += CANNED_TEXT;
+    }
+    return text.slice(0, length);
+  }
+
+  var POST_TEXT = buildCannedText(POST_TEXT_BYTES);
+  var POST_BINARY = Uint8Array.from({ length: 256 }, function (_, i) {
+    return i;
+  });
+
+  var WS_TEXT_MESSAGES = [
+    "Hello tunnel!",
+    "bidirectional frames",
+    "couloir says hi",
+    "frame four",
+    "still going",
+    "last text frame",
+  ];
+  var WS_BINARY_MESSAGES = [
+    Uint8Array.from([0x00, 0xff, 0x01, 0xfe, 0x80, 0x7f, 0x41, 0x42]),
+    Uint8Array.from([0xff, 0x00, 0x81, 0x7e, 0xfe, 0x01, 0x42, 0x43]),
+  ];
+
+  // --- Small helpers -----------------------------------------------------------------
 
   var look = {
     pending: ["·", "dim"],
@@ -39,9 +69,9 @@
   var CASES = [
     { name: "Plain GET request", ms: 10000, run: runGet },
     { name: "Regular POST + echo (" + POST_TEXT_BYTES / 1024 + " KiB text)", ms: 15000, run: runPostText },
-    { name: "Binary POST + echo (" + POST_BINARY_BYTES / 1024 + " KiB random)", ms: 20000, run: runPostBinary },
+    { name: "Binary POST + echo (" + POST_BINARY.length + " B fixed)", ms: 10000, run: runPostBinary },
     {
-      name: "WebSocket echo (" + WS_TEXT_FRAMES + " text + " + WS_BINARY_FRAMES + " binary)",
+      name: "WebSocket echo (" + WS_TEXT_MESSAGES.length + " text + " + WS_BINARY_MESSAGES.length + " binary)",
       ms: 20000,
       run: runWebsocket,
     },
@@ -50,7 +80,7 @@
   ];
 
   var state = CASES.map(function () {
-    return { status: "pending", detail: "", error: null };
+    return { status: "pending", detail: "", outDetail: "", inDetail: "", error: null };
   });
   var box = document.getElementById("box");
   var running = false;
@@ -66,6 +96,10 @@
     return text.length > width ? text.slice(0, width - 1) + "…" : text;
   }
 
+  function collapsed(text) {
+    return String(text).replace(/\s+/g, " ");
+  }
+
   function elapsed(since) {
     return Math.round(performance.now() - since) + " ms";
   }
@@ -74,6 +108,15 @@
     if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MiB";
     if (n >= 10240) return Math.round(n / 1024) + " KiB";
     return (n / 1024).toFixed(1) + " KiB";
+  }
+
+  function hexPreview(bytes, count) {
+    var out = [];
+    var upto = Math.min(count, bytes.length);
+    for (var i = 0; i < upto; i++) {
+      out.push((bytes[i] < 16 ? "0" : "") + bytes[i].toString(16));
+    }
+    return out.join(" ") + (bytes.length > count ? " …" : "");
   }
 
   function withTimeout(promise, ms, label) {
@@ -88,15 +131,21 @@
     });
   }
 
-  function randomText(n) {
-    var chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    var raw = new Uint8Array(n);
-    crypto.getRandomValues(raw);
-    var out = new Array(n);
-    for (var i = 0; i < n; i++) {
-      out[i] = chars[raw[i] % chars.length];
+  /**
+   * Errors can carry the out/in details collected so far for the failed step.
+   * `details` is either an object ({ outDetail, inDetail }) or a plain in-detail string.
+   */
+  function caseError(message, details) {
+    var err = new Error(message);
+    if (details) {
+      if (typeof details === "string") {
+        err.inDetail = details;
+      } else {
+        err.outDetail = details.outDetail;
+        err.inDetail = details.inDetail;
+      }
     }
-    return out.join("");
+    return err;
   }
 
   function postEcho(body, contentType) {
@@ -113,52 +162,70 @@
     });
   }
 
+  // --- Test cases --------------------------------------------------------------------
+
   function runGet() {
     var since = performance.now();
+    var sent = "GET /api/hello";
     return fetch(ORIGIN + "/api/hello", { cache: "no-store" })
       .then(function (res) {
         if (!res.ok) {
-          throw new Error("HTTP " + res.status);
+          throw caseError("HTTP " + res.status, { outDetail: sent, inDetail: res.status + " error response" });
         }
         return res.json();
       })
       .then(function (data) {
         if (!data || data.ok !== true || typeof data.message !== "string") {
-          throw new Error("unexpected JSON payload");
+          throw caseError("unexpected JSON payload", { outDetail: sent, inDetail: "unexpected body" });
         }
-        return "JSON ok (" + elapsed(since) + ")";
+        return {
+          detail: "JSON ok (" + elapsed(since) + ")",
+          outDetail: sent,
+          inDetail: '200 · hello: "' + data.message + '"',
+        };
       });
   }
 
   function runPostText() {
     var since = performance.now();
-    var payload = randomText(POST_TEXT_BYTES);
-    return postEcho(payload, "text/plain").then(function (text) {
-      if (text !== payload) {
-        throw new Error("echo mismatch (got " + text.length + " / " + payload.length + " chars)");
+    var out = "POST /api/echo · " + fmtBytes(POST_TEXT.length) + ' · "' + clip(collapsed(POST_TEXT), 30) + '"';
+    return postEcho(POST_TEXT, "text/plain").then(function (text) {
+      if (text !== POST_TEXT) {
+        throw caseError("echo mismatch (got " + text.length + " / " + POST_TEXT.length + " chars)", {
+          outDetail: out,
+          inDetail: 'mismatched echo: "' + clip(collapsed(text), 30) + '"',
+        });
       }
-      return fmtBytes(payload.length) + " echoed (" + elapsed(since) + ")";
+      return {
+        detail: fmtBytes(POST_TEXT.length) + " echoed (" + elapsed(since) + ")",
+        outDetail: out,
+        inDetail: '200 · echo match · "' + clip(collapsed(text), 30) + '"',
+      };
     });
   }
 
   function runPostBinary() {
     var since = performance.now();
-    var payload = new Uint8Array(POST_BINARY_BYTES);
-    // crypto.getRandomValues rejects buffers over 65536 bytes: fill in 64 KiB chunks.
-    for (var fill = 0; fill < payload.length; fill += 65536) {
-      crypto.getRandomValues(payload.subarray(fill, Math.min(fill + 65536, payload.length)));
-    }
-    return postEcho(payload, "application/octet-stream").then(function (buffer) {
+    var out = "POST /api/echo · " + POST_BINARY.length + " B · " + hexPreview(POST_BINARY, 6);
+    return postEcho(POST_BINARY, "application/octet-stream").then(function (buffer) {
       var got = new Uint8Array(buffer);
-      if (got.length !== payload.length) {
-        throw new Error("echo length mismatch (got " + got.length + " B)");
+      var inEcho = hexPreview(got, 6);
+      if (got.length !== POST_BINARY.length) {
+        throw caseError("echo length mismatch (got " + got.length + " B)", { outDetail: out, inDetail: inEcho });
       }
       for (var i = 0; i < got.length; i++) {
-        if (got[i] !== payload[i]) {
-          throw new Error("echo mismatch at byte " + i);
+        if (got[i] !== POST_BINARY[i]) {
+          throw caseError("echo mismatch at byte " + i, {
+            outDetail: out,
+            inDetail: inEcho + " (mismatch at " + i + ")",
+          });
         }
       }
-      return fmtBytes(payload.length) + " echoed (" + elapsed(since) + ")";
+      return {
+        detail: POST_BINARY.length + " B echoed (" + elapsed(since) + ")",
+        outDetail: out,
+        inDetail: "200 · echo match · " + got.length + " B · " + inEcho,
+      };
     });
   }
 
@@ -168,11 +235,9 @@
       var ws;
       var sent = [];
       var received = 0;
-      var echoedText = 0;
-      var echoedBinary = 0;
       var finished = false;
       var timer = setTimeout(function () {
-        finish(new Error("WebSocket timed out after 20 s"));
+        fail(new Error("WebSocket timed out after 20 s"));
       }, 20000);
 
       try {
@@ -184,7 +249,19 @@
       }
       ws.binaryType = "arraybuffer";
 
-      function finish(err, detail) {
+      var out =
+        WS_TEXT_MESSAGES.length +
+        WS_BINARY_MESSAGES.length +
+        " frames · " +
+        WS_TEXT_MESSAGES.length +
+        " text + " +
+        WS_BINARY_MESSAGES.length +
+        ' binary · text: "' +
+        WS_TEXT_MESSAGES[0] +
+        '" … · bin: ' +
+        hexPreview(WS_BINARY_MESSAGES[0], 4);
+
+      function finish(err, detail, inDetail) {
         if (finished) return;
         finished = true;
         clearTimeout(timer);
@@ -193,30 +270,37 @@
         } catch {
           // best-effort cleanup; nothing to do if the socket is already closed
         }
-        if (err) reject(err);
-        else resolve(detail);
+        if (err) {
+          err.outDetail = err.outDetail || out;
+          err.inDetail = err.inDetail || "got " + received + "/" + sent.length + " echoes back";
+          reject(err);
+        } else {
+          resolve({ detail: detail, outDetail: out, inDetail: inDetail });
+        }
+      }
+
+      function fail(err) {
+        finish(err || new Error("WebSocket failed"));
       }
 
       ws.onerror = function () {
-        finish(new Error("WebSocket connection failed"));
+        fail(new Error("WebSocket connection failed"));
       };
       ws.onclose = function () {
         if (!finished) {
-          finish(new Error("WebSocket closed before all echoes were received"));
+          fail(
+            new Error("WebSocket closed before all echoes were received (got " + received + "/" + sent.length + ")"),
+          );
         }
       };
       ws.onopen = function () {
-        for (var i = 0; i < WS_TEXT_FRAMES; i++) {
-          var text = "frame " + i + ": " + randomText(38);
-          sent.push({ binary: false, value: text });
-          ws.send(text);
+        for (var i = 0; i < WS_TEXT_MESSAGES.length; i++) {
+          sent.push({ binary: false, value: WS_TEXT_MESSAGES[i] });
+          ws.send(WS_TEXT_MESSAGES[i]);
         }
-        for (var j = 0; j < WS_BINARY_FRAMES; j++) {
-          var bytes = new Uint8Array(64);
-          crypto.getRandomValues(bytes);
-          bytes[0] = 0x80; // force a non-UTF8 byte to exercise binary framing
-          sent.push({ binary: true, value: bytes });
-          ws.send(bytes);
+        for (var j = 0; j < WS_BINARY_MESSAGES.length; j++) {
+          sent.push({ binary: true, value: WS_BINARY_MESSAGES[j] });
+          ws.send(WS_BINARY_MESSAGES[j]);
         }
       };
       ws.onmessage = function (event) {
@@ -227,48 +311,40 @@
         }
         var expected = sent[k];
         if (event.data instanceof ArrayBuffer) {
-          if (!expected.binary) {
-            finish(new Error("frame " + k + ": expected text echo, got binary"));
-            return;
-          }
           var got = new Uint8Array(event.data);
           var wanted = expected.value;
+          var inEcho = "binary in: " + hexPreview(got, 6);
+          if (!expected.binary) {
+            fail(caseError("frame " + k + ": expected text echo, got binary", inEcho));
+            return;
+          }
           if (got.length !== wanted.length) {
-            finish(new Error("frame " + k + ": binary echo length mismatch"));
+            fail(caseError("frame " + k + ": binary echo length mismatch", inEcho));
             return;
           }
           for (var i = 0; i < got.length; i++) {
             if (got[i] !== wanted[i]) {
-              finish(new Error("frame " + k + ": binary echo mismatch at byte " + i));
+              fail(caseError("frame " + k + ": binary echo mismatch at byte " + i, inEcho + " (expected 00 01 …)"));
               return;
             }
           }
-          echoedBinary++;
         } else {
+          var textIn = "text in: " + '"' + clip(collapsed(event.data), 34) + '"';
           if (expected.binary) {
-            finish(new Error("frame " + k + ": expected binary echo, got text"));
+            fail(caseError("frame " + k + ": expected binary echo, got text", textIn));
             return;
           }
           if (event.data !== expected.value) {
-            finish(new Error("frame " + k + ": text echo mismatch"));
+            fail(caseError("frame " + k + ": text echo mismatch", textIn));
             return;
           }
-          echoedText++;
         }
         received++;
         if (received === sent.length) {
           finish(
             null,
-            echoedText +
-              "/" +
-              WS_TEXT_FRAMES +
-              " text + " +
-              echoedBinary +
-              "/" +
-              WS_BINARY_FRAMES +
-              " binary in order (" +
-              elapsed(since) +
-              ")",
+            received + "/" + sent.length + " frames in order (" + elapsed(since) + ")",
+            "8/8 echoes match · " + elapsed(since),
           );
         }
       };
@@ -293,7 +369,14 @@
         return;
       }
 
-      function finish(err, detail) {
+      function eventsPreview() {
+        var labels = seen.map(function (event) {
+          return '"' + (event.msg || "event " + event.i) + '"';
+        });
+        return labels.slice(0, 3).join(" · ") + (labels.length > 3 ? " · …" : "");
+      }
+
+      function finish(err, detail, inDetail) {
         if (finished) return;
         finished = true;
         clearTimeout(timer);
@@ -302,8 +385,13 @@
         } catch {
           // best-effort cleanup; nothing to do if already closed
         }
-        if (err) reject(err);
-        else resolve(detail);
+        if (err) {
+          err.outDetail = err.outDetail || "GET /api/sse";
+          err.inDetail = err.inDetail || (seen.length ? eventsPreview() : "…");
+          reject(err);
+        } else {
+          resolve({ detail: detail, outDetail: "GET /api/sse", inDetail: inDetail });
+        }
       }
 
       es.addEventListener("tick", function (event) {
@@ -311,21 +399,21 @@
         try {
           data = JSON.parse(event.data);
         } catch {
-          finish(new Error("SSE: invalid event payload"));
+          finish(new Error("SSE: invalid event payload"), "GET /api/sse", "unparseable event");
           return;
         }
         if (data.i !== seen.length) {
-          finish(new Error("SSE out of order: expected event " + seen.length + ", got " + data.i));
+          finish(new Error("SSE out of order: expected event " + seen.length + ", got " + data.i), null, null);
           return;
         }
-        seen.push(data.i);
+        seen.push(data);
       });
       es.addEventListener("done", function () {
         if (seen.length !== SSE_EVENTS) {
-          finish(new Error("SSE: got " + seen.length + " events, expected " + SSE_EVENTS));
+          finish(new Error("SSE: got " + seen.length + " events, expected " + SSE_EVENTS), null, null);
           return;
         }
-        finish(null, seen.length + "/" + SSE_EVENTS + " events in order (" + elapsed(since) + ")");
+        finish(null, seen.length + "/" + SSE_EVENTS + " events in order (" + elapsed(since) + ")", eventsPreview());
       });
       es.onerror = function () {
         if (!finished && es.readyState === EventSource.CLOSED) {
@@ -337,12 +425,13 @@
 
   function runChunked() {
     var since = performance.now();
+    var out = "GET /api/stream";
     return fetch(ORIGIN + "/api/stream", { cache: "no-store" }).then(function (res) {
       if (!res.ok) {
-        throw new Error("HTTP " + res.status);
+        throw caseError("HTTP " + res.status, { outDetail: out, inDetail: res.status + " error response" });
       }
       if (!res.body || !res.body.getReader) {
-        throw new Error("streaming responses not supported by this browser");
+        throw caseError("streaming responses not supported by this browser", { outDetail: out });
       }
       var reader = res.body.getReader();
       var decoder = new TextDecoder();
@@ -375,36 +464,38 @@
           }
           var chunk = /^chunk (\d+)$/.exec(lines[i]);
           if (!chunk) {
-            throw new Error("unexpected stream line: " + clip(lines[i], 24));
+            throw caseError("unexpected stream line: " + clip(lines[i], 24), { outDetail: out });
           }
           chunks.push(parseInt(chunk[1], 10));
         }
         if (expectedCount === null) {
-          throw new Error("missing stream trailer line");
+          throw caseError("missing stream trailer line", { outDetail: out });
         }
         if (chunks.length !== expectedCount) {
-          throw new Error("got " + chunks.length + " chunks, expected " + expectedCount);
+          throw caseError("got " + chunks.length + " chunks, expected " + expectedCount, { outDetail: out });
         }
         for (var j = 0; j < chunks.length; j++) {
           if (chunks[j] !== j) {
-            throw new Error("chunks out of order: got chunk " + chunks[j] + " at position " + j);
+            throw caseError("chunks out of order: got chunk " + chunks[j] + " at position " + j, { outDetail: out });
           }
         }
-        return (
-          chunks.length +
-          "/" +
-          expectedCount +
-          " chunks in " +
-          reads +
-          " read" +
-          (reads === 1 ? "" : "s") +
-          " (" +
-          elapsed(since) +
-          ")"
-        );
+        return {
+          detail: chunks.length + "/" + expectedCount + " chunks (" + elapsed(since) + ")",
+          outDetail: out,
+          inDetail:
+            chunks.length +
+            ' ordered lines · "chunk 0" … "chunk ' +
+            (chunks.length - 1) +
+            '" · ' +
+            reads +
+            " read" +
+            (reads === 1 ? "" : "s"),
+        };
       });
     });
   }
+
+  // --- Rendering ---------------------------------------------------------------------
 
   function padName(name) {
     return (name + " ").padEnd(NAME_COL, ".").slice(0, NAME_COL);
@@ -422,6 +513,16 @@
 
   function centered(text) {
     return " ".repeat(Math.max(0, Math.floor((PAGE_WIDTH - 6 - text.length) / 2))) + text;
+  }
+
+  // Free-form detail sub-lines ("out: …" / "in:  …") indented below a result row.
+  // Free-form detail sub-lines ("out: …" / "in:  …") indented below a result row; the
+  // prefixes are padded so the detail columns align under each other.
+  function detailLine(prefix, text) {
+    if (!text) return "";
+    return (
+      '        <span class="dim">' + prefix.padEnd(4) + " " + escapeHtml(clip(text, PAGE_WIDTH - 20)) + "</span>\n"
+    );
   }
 
   // Result rows: "|  " (3) + "[✓] " (4) + name block (NAME_COL) + detail + pad + " |" (2).
@@ -456,8 +557,11 @@
       detailHtml +
       " ".repeat(pad) +
       " |\n";
+    row += detailLine("out:", current.outDetail);
+    row += detailLine("in:", current.inDetail);
     if (current.error) {
-      row += '        <span class="fail">→ ' + escapeHtml(clip(current.error, PAGE_WIDTH - 14)) + "</span>\n";
+      var errorLine = "→ " + clip(current.error, PAGE_WIDTH - 14);
+      row += '        <span class="fail">' + escapeHtml(errorLine) + "</span>\n";
     }
     return row;
   }
@@ -508,7 +612,7 @@
         " failed</span>";
     }
     html += boxRow(summaryHtml, summaryPlain.length);
-    var hint = "press [r] or reload to re-run the tests";
+    var hint = "press [r] or reload to re-run · out = what was sent · in = what came back";
     html += boxRow("<span class='dim'>" + hint + "</span>", hint.length);
     html += border();
 
@@ -521,6 +625,8 @@
     for (var i = 0; i < state.length; i++) {
       state[i].status = "pending";
       state[i].detail = "";
+      state[i].outDetail = "";
+      state[i].inDetail = "";
       state[i].error = null;
     }
     render();
@@ -542,13 +648,17 @@
         promise = Promise.reject(err);
       }
       withTimeout(promise, CASES[i].ms, CASES[i].name)
-        .then(function (detail) {
+        .then(function (result) {
           state[i].status = "pass";
-          state[i].detail = detail;
+          state[i].detail = result.detail;
+          state[i].outDetail = result.outDetail;
+          state[i].inDetail = result.inDetail;
         })
         .catch(function (err) {
           state[i].status = "fail";
           state[i].detail = "failed";
+          state[i].outDetail = (err && err.outDetail) || "";
+          state[i].inDetail = (err && err.inDetail) || "";
           state[i].error = err && err.message ? err.message : String(err);
         })
         .then(next);
