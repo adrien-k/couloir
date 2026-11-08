@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loggerFactory } from "../logger.js";
+import { couloirPathname } from "../protocol.js";
 import version from "../version.js";
 import { demoPage } from "./demo-page.js";
 import { handleWsEchoSocket, websocketEchoUpgradeResponse } from "./demo-ws.js";
@@ -38,8 +39,6 @@ function httpError(status, message) {
   error.status = status;
   return error;
 }
-
-const DEMO_BASE_URL = "http://couloir-demo.local";
 
 export function createDemoServer({
   maxBodyBytes = MAX_DEMO_BODY_BYTES,
@@ -183,7 +182,7 @@ export function createDemoServer({
   }
 
   async function handleRequest(req, res) {
-    const { pathname } = new URL(req.url, DEMO_BASE_URL);
+    const pathname = couloirPathname(req.url);
     const route = `${req.method} ${pathname}`;
 
     try {
@@ -252,7 +251,7 @@ export function createDemoServer({
     handleRequest(req, res);
   });
   server.on("upgrade", (req, socket, head) => {
-    const { pathname } = new URL(req.url, DEMO_BASE_URL);
+    const pathname = couloirPathname(req.url);
     const wsKey = req.headers["sec-websocket-key"];
     if (pathname === wsWithEchoPath && wsKey) {
       log.info("[demo] WebSocket echo connection opened");
