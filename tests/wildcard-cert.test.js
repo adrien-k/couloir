@@ -76,6 +76,7 @@ describe("relay with wildcard cert", () => {
       domain: "test.local",
       wildcardCert: WILDCARD_CERT,
       wildcardKey: WILDCARD_KEY,
+      password: "certs-relay",
       log,
     });
     await relayServer.start();

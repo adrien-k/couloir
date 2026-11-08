@@ -1,10 +1,11 @@
 import { join } from "node:path";
 
-import { createCertServer, createWildcardCertServer } from "../certs.js";
+import { createCertServer, createWildcardCertServer, prefetchCert } from "../certs.js";
 import { loggerFactory } from "../logger.js";
 import { RelayServer } from "./relay-server.js";
 import { CONFIG_DIR } from "../config.js";
 import ControlApi from "./control-api.js";
+import UserError from "../user-error.js";
 
 export default function relay({
   verbose,
@@ -22,6 +23,13 @@ export default function relay({
   log = loggerFactory(),
   // After 60s of inactivity on a host socket, we close it to prevent orphan sockets
   hostSocketTimeout = 60000,
+  // Drop a couloir that is opened but never joined so labels cannot be reserved forever.
+  joinTimeout = 60000,
+  headerTimeout = 10000,
+  maxCouloirs = 100,
+  maxConnections = 500,
+  openRateMax = 30,
+  openRateWindowMs = 60000,
 }) {
   let certService;
   if (!http) {
@@ -59,17 +67,29 @@ export default function relay({
     password,
     controlApi,
     hostSocketTimeout,
+    joinTimeout,
+    headerTimeout,
+    maxCouloirs,
+    maxConnections,
+    openRateMax,
+    openRateWindowMs,
   });
 
   return {
     start: async () => {
+      if (!controlApi.enabled() && !password) {
+        throw new UserError(
+          "Refusing to start an open relay. Pass --password <secret> to require a password, or set CONTROL_HOST to use a token-based control API.",
+        );
+      }
+
       await controlApi.init();
 
       if (certService) {
         // Already prepare a few certs cert for the main domain and first couloir
-        // We don't wait for those requests to complete
-        certService.getCertOnDemand(domain);
-        certService.getCertOnDemand(`${relay.hostPrefix}.${domain}`);
+        // We don't wait for those requests to complete; failures are logged, not thrown.
+        prefetchCert(certService, domain, log);
+        prefetchCert(certService, `${relay.hostPrefix}.${domain}`, log);
 
         await certService.start();
       }

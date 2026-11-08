@@ -8,13 +8,15 @@ import version from "./version.js";
 import { loggerFactory, errorMessage } from "./logger.js";
 import relay from "./relay/index.js";
 import expose from "./expose/index.js";
+import demo, { resolvePort } from "./demo/index.js";
 import logo from "./logo.js";
-import { settings, saveSetting } from "./config.js";
+import { settings, saveSetting, redactedSettings, redactedValue } from "./config.js";
 
 function printConfig(argv) {
-  const settingKeys = Object.keys(settings);
+  const redacted = redactedSettings();
+  const settingKeys = Object.keys(redacted);
   if (settingKeys.length) {
-    argv.log.raw(`Using stored configuration:\n${settingKeys.map((k) => `- ${k}: ${settings[k]}`).join("\n")}\n`);
+    argv.log.raw(`Using stored configuration:\n${settingKeys.map((k) => `- ${k}: ${redacted[k]}`).join("\n")}\n`);
   }
 }
 
@@ -33,7 +35,10 @@ yargs(hideBin(process.argv))
   .middleware((argv) => ({
     ...argv,
     relayPort: argv.relayPort || (argv.http ? 80 : 443),
-    log: loggerFactory({ ...argv, hide: argv.password?.length ? [argv.password] : [] }),
+    log: loggerFactory({
+      ...argv,
+      hide: [argv.password, argv.cliToken].filter((value) => value?.length),
+    }),
   }))
   .command("version", "Show the current version\n", ({ argv }) => {
     argv.log.raw(version);
@@ -59,7 +64,7 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Require a password to access the relay.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
+          describe: `Require a password to access the relay.${settings["password"] ? `\n[default: ${redactedValue(settings["password"])}]` : ""}`,
           type: "string",
         })
         .option("email", {
@@ -155,7 +160,7 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Password to access the relay, if required.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
+          describe: `Password to access the relay, if required.${settings["password"] ? `\n[default: ${redactedValue(settings["password"])}]` : ""}`,
           type: "string",
         })
         .options("cli-token", {
@@ -183,7 +188,7 @@ yargs(hideBin(process.argv))
         }),
     async (argv) => {
       saveSetting(argv.config, argv.value);
-      argv.log.raw(`Setting "${argv.config}" saved. Settings:\n${JSON.stringify(settings, null, 2)}`);
+      argv.log.raw(`Setting "${argv.config}" saved. Settings:\n${JSON.stringify(redactedSettings(), null, 2)}`);
     },
   )
   .command(
@@ -195,7 +200,24 @@ yargs(hideBin(process.argv))
       }),
     async (argv) => {
       saveSetting(argv.config);
-      argv.log.raw(`Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(settings, null, 2)}`);
+      argv.log.raw(`Setting "${argv.config}" deleted. Settings:\n${JSON.stringify(redactedSettings(), null, 2)}`);
+    },
+  )
+  .command(
+    "demo",
+    "Start a local test HTTP service to validate tunnels: GET/POST echo, WebSocket echo, SSE and chunked streaming (see the README 'Test your relay' recipe).",
+    (yargs) =>
+      yargs.option("port", {
+        describe: "Port of the demo server. Default: PORT env var or 3000.",
+        type: "integer",
+      }),
+    async (argv) => {
+      const port = resolvePort(argv.port, process.env.PORT);
+      argv.log.raw(logo(`Demo Server | Version ${version}`, { stdout: true, center: true }));
+      if (!argv.ignoreConfig) {
+        printConfig(argv);
+      }
+      await demo({ port, log: argv.log }).start();
     },
   )
   .option("verbose", {

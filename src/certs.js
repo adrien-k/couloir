@@ -4,35 +4,105 @@
 
 import fs from "fs";
 import tls from "node:tls";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import http from "node:http";
 import util from "node:util";
 import { X509Certificate } from "node:crypto";
 
 import * as acme from "acme-client";
+import { isDnsLabel } from "./couloir-label.js";
 
 const readFile = util.promisify(fs.readFile);
 const writeFile = util.promisify(fs.writeFile);
 const readDir = util.promisify(fs.readdir);
 const fsStat = util.promisify(fs.stat);
 const mkdir = util.promisify(fs.mkdir);
+const chmod = util.promisify(fs.chmod);
 
 const HTTP_SERVER_PORT = 80;
 const CLIENT_KEY_FILE = "acme-client.key";
+export const SECRET_FILE_MODE = 0o600;
+export const SECRET_DIR_MODE = 0o700;
 
-async function ensureDir(dir) {
-  await mkdir(dir, { recursive: true });
+/** Strip a :port suffix from a Host header. IPv6 Hosts are not used for ACME redirects. */
+export function hostnameFromHostHeader(host) {
+  if (!host) {
+    return "";
+  }
+  return String(host).split(":")[0].toLowerCase();
+}
+
+/** Apex or a single-label subdomain of `domain`. */
+export function isAllowedRedirectHost(host, domain) {
+  const hostname = hostnameFromHostHeader(host);
+  if (!hostname || !domain) {
+    return false;
+  }
+  const apex = domain.toLowerCase();
+  if (hostname === apex) {
+    return true;
+  }
+  if (!hostname.endsWith(`.${apex}`)) {
+    return false;
+  }
+  return isDnsLabel(hostname.slice(0, -(apex.length + 1)));
+}
+
+/** Resolve a cert subdirectory under certsDirectory; reject path-shaped servernames. */
+export function safeCertDirectory(certsDirectory, servername) {
+  if (typeof servername !== "string" || !servername || servername.length > 253) {
+    throw new Error("Invalid servername");
+  }
+  const labels = servername.split(".");
+  for (let i = 0; i < labels.length; i++) {
+    if (i === 0 && labels[i] === "*") {
+      continue;
+    }
+    if (!isDnsLabel(labels[i])) {
+      throw new Error("Invalid servername");
+    }
+  }
+
+  const certDirectory = join(certsDirectory, servername);
+  const root = resolve(certsDirectory);
+  const resolved = resolve(certDirectory);
+  if (resolved !== root && !resolved.startsWith(root + sep)) {
+    throw new Error("Invalid certificate path");
+  }
+  return certDirectory;
+}
+
+export async function ensureSecretDir(dir) {
+  await mkdir(dir, { recursive: true, mode: SECRET_DIR_MODE });
+  await chmod(dir, SECRET_DIR_MODE);
+}
+
+export async function writeSecretFile(file, data) {
+  await writeFile(file, data, { mode: SECRET_FILE_MODE });
+  await chmod(file, SECRET_FILE_MODE);
+}
+
+export async function tightenSecretFile(file) {
+  try {
+    await chmod(file, SECRET_FILE_MODE);
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      throw err;
+    }
+  }
 }
 
 async function findOrCreateKey(certsDirectory) {
   const keyFile = join(certsDirectory, CLIENT_KEY_FILE);
   try {
-    return await readFile(keyFile);
+    const key = await readFile(keyFile);
+    await tightenSecretFile(keyFile);
+    return key;
   } catch (e) {
     if (e.code === "ENOENT") {
       const key = await acme.crypto.createPrivateKey();
-      await ensureDir(certsDirectory);
-      await writeFile(keyFile, key);
+      await ensureSecretDir(certsDirectory);
+      await writeSecretFile(keyFile, key);
       return key;
     } else {
       throw e;
@@ -60,10 +130,10 @@ class Certificate {
       throw new Error("Cannot save an empty Certificate");
     }
 
-    await ensureDir(certsDirectory);
-    const certDirectory = join(certsDirectory, servername);
-    await mkdir(certDirectory, { recursive: true });
-    await writeFile(join(certDirectory, "cert.key"), this.key);
+    await ensureSecretDir(certsDirectory);
+    const certDirectory = safeCertDirectory(certsDirectory, servername);
+    await ensureSecretDir(certDirectory);
+    await writeSecretFile(join(certDirectory, "cert.key"), this.key);
     await writeFile(join(certDirectory, "cert.pem"), this.cert);
   }
 
@@ -80,13 +150,16 @@ class Certificate {
 
   async ensureLoaded() {
     this.key = this.key || (await readFile(this.keyFile));
+    if (this.keyFile) {
+      await tightenSecretFile(this.keyFile);
+    }
     this.cert = this.cert || (await readFile(this.certFile, "utf8"));
     this.expiry = this.expiry || new Date(new X509Certificate(this.cert).validTo);
   }
 }
 
 async function loadCertificates(certsDirectory) {
-  await ensureDir(certsDirectory);
+  await ensureSecretDir(certsDirectory);
 
   const certificateStore = {};
   for (const file of await readDir(certsDirectory)) {
@@ -104,6 +177,16 @@ async function createClient(certsDirectory) {
   return new acme.Client({
     directoryUrl: acme.directory.letsencrypt.production,
     accountKey,
+  });
+}
+
+/** Fire-and-forget cert fetch; a failed ACME order must not become an unhandled rejection. */
+export function prefetchCert(certService, host, log) {
+  if (!certService) {
+    return;
+  }
+  Promise.resolve(certService.getCertOnDemand(host)).catch((err) => {
+    log?.error(`Failed to get certificate for ${host}: ${err?.message || err}`);
   });
 }
 
@@ -220,7 +303,7 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
       serverLog.info(`Received challenge request for token=${token}`);
 
       /* ACME challenge response */
-      if (token in challengeResponses) {
+      if (Object.hasOwn(challengeResponses, token)) {
         serverLog.debug(`Serving challenge response HTTP 200 token=${token}`);
         res.writeHead(200);
         res.end(challengeResponses[token]);
@@ -234,9 +317,16 @@ export function createCertServer({ domain, certsDirectory, log, email, allowServ
       return;
     }
 
-    /* HTTP 302 redirect */
-    serverLog.info(`HTTP 302 ${req.headers.host}${req.url}`);
-    res.writeHead(302, { Location: `https://${req.headers.host}${req.url}` });
+    /* HTTP 302 redirect — only to this relay's apex or a single-label subdomain */
+    const hostname = hostnameFromHostHeader(req.headers.host);
+    if (!isAllowedRedirectHost(req.headers.host, domain)) {
+      serverLog.info(`HTTP 400 invalid Host ${req.headers.host}`);
+      res.writeHead(400);
+      res.end();
+      return;
+    }
+    serverLog.info(`HTTP 302 ${hostname}${req.url}`);
+    res.writeHead(302, { Location: `https://${hostname}${req.url}` });
     res.end();
   });
 

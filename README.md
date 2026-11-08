@@ -69,10 +69,10 @@ mydomain.com A 1.2.3.4
 *.mydomain.com A 1.2.3.4
 ```
 
-3. Run the Couloir relay:
+3. Run the Couloir relay. Self-hosted relays require a password:
 
 ```sh
-couloir relay mydomain.com
+couloir relay mydomain.com --password foobar
 ```
 
 ### On your **local** machine
@@ -99,9 +99,9 @@ couloir 3000 --on mydomain.com --as bonjour
 
 ### Protect the Relay with a password
 
-You may want to require a password to use your relay as a Couloir proxy.
+Self-hosted relays refuse to start unless you pass `--password`.
 
-_Warning: using that option in combination with HTTP-only mode is not recommended as it results in the password
+_Warning: using `--password` in combination with HTTP-only mode is not recommended as it results in the password
 being transmitted in clear, unless TLS is terminated in front of the relay (see [Behind an HTTP reverse proxy](#behind-an-http-reverse-proxy))._
 
 ```sh
@@ -128,13 +128,34 @@ Then, you can simply open a couloir with:
 couloir 3000
 ```
 
+### Test your relay
+
+`couloir demo` starts a local test service that exercises the HTTP features a tunnel must
+forward correctly: plain GET, regular and binary POST (byte-exact echo), bidirectional
+WebSockets, Server-Sent Events and chunked streaming responses.
+
+1. Start the demo server (port 3000 by default, or pass `--port` / set `PORT`):
+
+```sh
+couloir demo
+```
+
+2. Expose it through the relay you want to verify:
+
+```sh
+couloir 3000 --on mydomain.com
+```
+
+3. Open the exposed URL in a browser and check the tests results on the page (green checks
+   or red crosses per test case).
+
 ### HTTP-only mode
 
 In this mode, you only need the relay port to be accessible from Internet (80 by default in HTTP mode).
 
 ```sh
 # On the relay
-couloir relay mydomain.com --http
+couloir relay mydomain.com --http --password foobar
 
 # On your local machine
 couloir 3000 --on mydomain.com --http
@@ -148,7 +169,7 @@ The expose client opens and joins a couloir with ordinary HTTP (`POST /_couloir/
 
 Typical layout:
 
-- Relay: `couloir relay mydomain.com --http` on the port the proxy forwards to (do **not** enable Couloir’s own ACME / port 80 when the proxy owns 80/443).
+- Relay: `couloir relay mydomain.com --http --password foobar` on the port the proxy forwards to (do **not** enable Couloir’s own ACME / port 80 when the proxy owns 80/443).
 - Client: `couloir 3000 --on mydomain.com` (default HTTPS to 443 — **do not** pass `--http`).
 - Proxy hosts must include the apex (`mydomain.com`) and a wildcard (`*.mydomain.com`), or a catch-all.
 - Proxy must forward WebSocket upgrades and preserve the `Host` header.
@@ -156,6 +177,8 @@ Typical layout:
 - Idle timeouts around 60s on the proxy match the relay’s host-socket timeout; idle join sockets are recreated automatically.
 
 Control routes (`/_couloir/open`, `/_couloir/join`) are only intercepted on the **apex** host. The same paths on a couloir subdomain are tunneled to your local app.
+
+When `CONTROL_HOST` is set, every other request on the apex host is proxied to that process. Treat it as a public reverse proxy: the control plane must authenticate its own routes. The relay’s `X-API-KEY` is only sent on the relay’s own `fetch` calls, not on this proxied traffic.
 
 ### Run the relay on a different port
 
@@ -166,7 +189,7 @@ For example, port 3000:
 
 ```sh
 # On the relay
-couloir relay mydomain.com --port 3000
+couloir relay mydomain.com --password foobar --port 3000
 
 # On your local machine
 couloir 3000 --on mydomain.com --relay-port 3000
@@ -188,7 +211,7 @@ Install pm2 with `npm install -g pm2`.
 Then:
 
 ```sh
-pm2 start "couloir relay mydomain.com" --name couloir
+pm2 start "couloir relay mydomain.com --password foobar" --name couloir
 pm2 save
 # To have the daemon run on boot. Follow instructions.
 pm2 startup
@@ -204,7 +227,7 @@ letting Couloir generate per-subdomain certificates on demand. This is useful wh
 - You manage certificates externally and want full control over renewal.
 
 ```sh
-couloir relay mydomain.com \
+couloir relay mydomain.com --password foobar \
   --wildcard-cert /path/to/fullchain.pem \
   --wildcard-key  /path/to/privkey.pem
 ```
@@ -255,7 +278,7 @@ This uses the DNS-01 challenge via Route53 — no need to open port 80.
 5. **Start the relay** pointing at the installed certificate:
 
    ```sh
-   couloir relay mydomain.com \
+   couloir relay mydomain.com --password foobar \
      --wildcard-cert /etc/couloir/fullchain.pem \
      --wildcard-key  /etc/couloir/privkey.pem
    ```
