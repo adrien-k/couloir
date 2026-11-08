@@ -8,6 +8,22 @@ export const CONFIG_DIR = join(os.homedir(), ".couloir");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 const SECRET_KEYS = new Set(["password", "cliToken", "cli-token"]);
 
+/** Fixed-length mask between revealed chars, so the true length is not leaked. */
+const SECRET_MASK = "********";
+/** Secrets shorter than this are fully redacted: 2 revealed chars would be >25% of the value. */
+export const REVEAL_MIN_LENGTH = 8;
+
+/**
+ * Redacts a secret configuration value for display: reveals the first and last characters
+ * for long enough values, and falls back to a full redaction marker otherwise.
+ */
+export function redactedValue(value) {
+  if (typeof value !== "string" || value.length < REVEAL_MIN_LENGTH) {
+    return "<hidden>";
+  }
+  return value[0] + SECRET_MASK + value[value.length - 1];
+}
+
 const readConfigSync = () => {
   try {
     return JSON.parse(readFileSync(CONFIG_FILE, "utf8"));
@@ -31,7 +47,7 @@ const saveConfigSync = () => {
 
 export function redactedSettings(values = settings) {
   return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [key, SECRET_KEYS.has(key) ? "<hidden>" : value]),
+    Object.entries(values).map(([key, value]) => [key, SECRET_KEYS.has(key) ? redactedValue(value) : value]),
   );
 }
 

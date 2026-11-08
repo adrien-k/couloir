@@ -10,7 +10,7 @@ import relay from "./relay/index.js";
 import expose from "./expose/index.js";
 import demo, { resolvePort } from "./demo/index.js";
 import logo from "./logo.js";
-import { settings, saveSetting, redactedSettings } from "./config.js";
+import { settings, saveSetting, redactedSettings, redactedValue } from "./config.js";
 
 function printConfig(argv) {
   const redacted = redactedSettings();
@@ -64,7 +64,7 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Require a password to access the relay.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
+          describe: `Require a password to access the relay.${settings["password"] ? `\n[default: ${redactedValue(settings["password"])}]` : ""}`,
           type: "string",
         })
         .option("open-relay", {
@@ -166,7 +166,7 @@ yargs(hideBin(process.argv))
           default: false,
         })
         .options("password", {
-          describe: `Password to access the relay, if required.${settings["password"] ? "\n[default: <hidden>]" : ""}`,
+          describe: `Password to access the relay, if required.${settings["password"] ? `\n[default: ${redactedValue(settings["password"])}]` : ""}`,
           type: "string",
         })
         .options("cli-token", {
