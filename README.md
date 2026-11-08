@@ -134,6 +134,49 @@ Then, you can simply open a couloir with:
 couloir 3000
 ```
 
+### Test your relay
+
+`couloir demo` starts a local test service that exercises the HTTP features a tunnel must
+forward correctly: plain GET, regular and binary POST (byte-exact echo), bidirectional
+WebSockets, Server-Sent Events and chunked streaming responses. It is not listed in
+`couloir --help`.
+
+1. Start the demo server (port 3000 by default, or pass `--port` / set `PORT`):
+
+```sh
+couloir demo
+```
+
+2. Expose it through the relay you want to verify:
+
+```sh
+couloir 3000 --on mydomain.com
+```
+
+3. Open the exposed URL in a browser. The page runs every test against its own origin and
+   shows a green check or a red cross per row, with the reason on failures (press `r` or
+   reload to re-run):
+
+```
++------------------------------------------------------------------------+
+|                    COULOIR DEMO · HTTP TEST CASES                      |
++------------------------------------------------------------------------+
+|  [✓] Plain GET request .................... JSON ok (12 ms)             |
+|  [✓] Regular POST + echo (16 KiB text) .... 16 KiB echoed (21 ms)       |
+|  [✓] Binary POST + echo (256 KiB random) .. 256 KiB echoed (44 ms)      |
+|  [✓] WebSocket echo (6 text + 2 binary) ... 6/6 text + 2/2 in order     |
+|  [✗] SSE stream (8 events)                FAILED                       |
+|        → SSE: got 3 events, expected 8                                 |
++------------------------------------------------------------------------+
+```
+
+Red crosses usually point at a reverse proxy or relay that does not forward WebSocket
+upgrades, buffers SSE/chunked responses, or truncates large bodies. Tips:
+
+- Re-run the tests after changing relay options (`--http`, `--port`) or adding a reverse proxy.
+- All six rows green means the path forwards what your app needs; connect your app after the
+  demo passes.
+
 ### HTTP-only mode
 
 In this mode, you only need the relay port to be accessible from Internet (80 by default in HTTP mode).
